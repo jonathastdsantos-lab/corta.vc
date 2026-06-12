@@ -115,7 +115,7 @@ function AIChat({ open, onClose, lang, context, msgs, onMsgs }) {
           )}
         </div>
 
-        {msgs.length <= 1 && (
+        {(msgs?.length || 0) <= 1 && (
           <div className="ai-quick">
             {quick.map(q => <button key={q} onClick={() => send(q)}>{q}</button>)}
           </div>
