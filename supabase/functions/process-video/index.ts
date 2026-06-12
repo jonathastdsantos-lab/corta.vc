@@ -368,11 +368,208 @@ async function applyRemovals(
   return inputPath;
 }
 
+// ─────────────────────────────────────────────────────────────────
+// FACE TRACKING — 5 funções puras, sem efeitos colaterais externos
+// ─────────────────────────────────────────────────────────────────
+
+interface FacePoint {
+  t: number;   // timestamp em segundos
+  cx: number;  // centro X normalizado [0,1]
+  cy: number;  // centro Y normalizado [0,1]
+  w: number;   // largura normalizada [0,1]
+  h: number;   // altura normalizada [0,1]
+  conf: number;
+}
+
+interface CropKeyframe {
+  t: number;
+  x: number;   // pixels absolutos
+  y: number;
+  w: number;
+  h: number;
+}
+
+// 1. Extrai 1 frame por segundo do vídeo para o tmpDir
+async function extractFrames(
+  videoPath: string,
+  framesDir: string,
+  fps: number = 1,
+  maxSeconds: number = 300  // analisa no máximo 5min para não estourar timeout
+): Promise<number> {
+  await Deno.mkdir(framesDir, { recursive: true });
+
+  // Limita a duração analisada
+  const durationArg = maxSeconds > 0
+    ? ['-t', String(maxSeconds)]
+    : [];
+
+  const { code } = await new Deno.Command('ffmpeg', {
+    args: [
+      '-i', videoPath,
+      ...durationArg,
+      '-vf', `fps=${fps}`,
+      '-q:v', '3',        // qualidade JPEG boa mas não máxima
+      '-s', '480x854',    // reduz resolução para análise — YuNet é rápido mesmo assim
+      path.join(framesDir, 'frame_%04d.jpg'),
+    ]
+  }).output();
+
+  if (code !== 0) return 0;
+
+  // Conta quantos frames foram extraídos
+  let count = 0;
+  for await (const _ of Deno.readDir(framesDir)) count++;
+  return count;
+}
+
+// 2. Chama o script Python de detecção via subprocess
+async function detectFaces(
+  framesDir: string,
+  outputJson: string,
+  videoW: number,
+  videoH: number
+): Promise<FacePoint[]> {
+  // Localiza o script Python no mesmo diretório da função
+  const scriptPath = path.join(
+    path.dirname(new URL(import.meta.url).pathname),
+    'detect-faces.py'
+  );
+
+  const { code, stdout, stderr } = await new Deno.Command('python3', {
+    args: [
+      scriptPath,
+      '--frames', framesDir,
+      '--out', outputJson,
+      '--video-w', String(videoW),
+      '--video-h', String(videoH),
+      '--confidence', '0.55',
+      '--fps', '1',
+    ]
+  }).output();
+
+  if (code !== 0) {
+    const errText = new TextDecoder().decode(stderr);
+    console.warn('detectFaces falhou:', errText);
+    return [];
+  }
+
+  try {
+    const raw = JSON.parse(new TextDecoder().decode(stdout));
+    if (raw.error) { console.warn('detectFaces error:', raw.error); return []; }
+  } catch (_) {}
+
+  try {
+    const result = JSON.parse(await Deno.readTextFile(outputJson));
+    return (result.faces ?? []) as FacePoint[];
+  } catch (_) {
+    return [];
+  }
+}
+
+// 3. Aplica moving average na trajetória (elimina jitter sem lag)
+function smoothFaceTrack(
+  faces: FacePoint[],
+  windowSecs: number = 3
+): FacePoint[] {
+  if (faces.length < 3) return faces;
+
+  const smoothed: FacePoint[] = [];
+  for (let i = 0; i < faces.length; i++) {
+    const nearby = faces.filter(f => Math.abs(f.t - faces[i].t) <= windowSecs / 2);
+    const avg = (key: keyof FacePoint) =>
+      nearby.reduce((s, f) => s + (f[key] as number), 0) / nearby.length;
+    smoothed.push({
+      t:    faces[i].t,
+      cx:   avg('cx'),
+      cy:   avg('cy'),
+      w:    avg('w'),
+      h:    avg('h'),
+      conf: faces[i].conf,
+    });
+  }
+  return smoothed;
+}
+
+// 4. Converte posições de face em keyframes de crop para FFmpeg
+// Para 9:16: mantém largura total (iw) e define apenas Y (centraliza vertically no rosto)
+// Para 16:9: mantém altura total (ih) e define X (centraliza horizontally no rosto)
+function buildCropKeyframes(
+  faces: FacePoint[],
+  videoW: number,
+  videoH: number,
+  targetRatio: string = '9:16'
+): CropKeyframe[] {
+  const [rW, rH] = targetRatio.split(':').map(Number);
+  const isVertical = rH > rW;
+
+  return faces.map(f => {
+    const faceCx = f.cx * videoW;
+    const faceCy = f.cy * videoH;
+
+    if (isVertical) {
+      // Para 9:16: crop horizontal — centraliza a face no eixo X
+      // A largura do crop é a que cabe em 9:16 dentro do vídeo original
+      const cropW = Math.min(videoW, Math.round(videoH * (9 / 16)));
+      const targetX = Math.round(faceCx - cropW / 2);
+      const x = Math.max(0, Math.min(videoW - cropW, targetX));
+
+      return { t: f.t, x, y: 0, w: cropW, h: videoH };
+    } else {
+      // Para 16:9: crop vertical — centraliza a face no eixo Y
+      const cropH = Math.min(videoH, Math.round(videoW * (9 / 16)));
+      const targetY = Math.round(faceCy - cropH / 2);
+      const y = Math.max(0, Math.min(videoH - cropH, targetY));
+
+      return { t: f.t, x: 0, y, w: videoW, h: cropH };
+    }
+  });
+}
+
+// 5. Gera arquivo sendcmd.txt para FFmpeg com os keyframes de crop
+async function writeSendcmd(
+  keyframes: CropKeyframe[],
+  sendcmdPath: string
+): Promise<void> {
+  if (!keyframes.length) return;
+
+  const lines: string[] = [];
+  for (const kf of keyframes) {
+    // Formato: TIMESTAMP crop x VALOR, crop y VALOR, crop w VALOR, crop h VALOR;
+    lines.push(
+      `${kf.t.toFixed(3)} crop x ${kf.x},` +
+      ` crop y ${kf.y},` +
+      ` crop w ${kf.w},` +
+      ` crop h ${kf.h};`
+    );
+  }
+
+  await Deno.writeTextFile(sendcmdPath, lines.join('\n'));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVE — PIPELINE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
+  // Rota de health check — testar se Python + OpenCV estão disponíveis
+  if (req.method === 'GET' && new URL(req.url).searchParams.get('check') === 'face') {
+    try {
+      const { code, stdout } = await new Deno.Command('python3', {
+        args: ['-c', 'import cv2; print(cv2.__version__)']
+      }).output();
+      const version = new TextDecoder().decode(stdout).trim();
+      return new Response(JSON.stringify({
+        python: code === 0,
+        opencv: code === 0 ? version : null,
+        yunet: false, // verificar depois com path real
+      }), { headers: { 'Content-Type': 'application/json' } });
+    } catch (e) {
+      return new Response(JSON.stringify({ python: false, error: e.message }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const supabase = createClient(
@@ -481,6 +678,70 @@ serve(async (req) => {
           .run();
       });
       sourceVideoPath = convertedPath;
+    }
+
+    // ── Face tracking (inicializa como null — preenchido adiante) ──
+    let sendcmdPath: string | null = null;
+    let faceTrackEnabled = false;
+    const framesDir    = path.join(tmpDir, 'frames');
+    const facesJsonPath= path.join(tmpDir, 'faces.json');
+
+    // ── 5.5. Face tracking (planos starter+, vídeos com rosto) ────
+    //
+    // Analisa 1fps nos primeiros 5min do vídeo para detectar posição do rosto.
+    // Gera um arquivo sendcmd.txt usado pelo FFmpeg no render de cada clip.
+    // Fallback: se não detectar rostos, usa o scale+pad atual (sem mudança).
+    //
+    const enableFaceTracking = profile.plan !== 'free' && durationSeconds <= 1800;
+
+    if (enableFaceTracking) {
+      try {
+        console.log('Face tracking: extraindo frames...');
+        const frameCount = await extractFrames(
+          sourceVideoPath,
+          framesDir,
+          1,           // 1 fps
+          300          // máximo 5 minutos
+        );
+
+        if (frameCount > 2) {
+          console.log(`Face tracking: ${frameCount} frames, detectando rostos...`);
+
+          const [targetW, targetH] = (() => {
+            const [rW, rH] = (project.ratio || '9:16').split(':').map(Number);
+            const isVertical = rH > rW;
+            return isVertical ? [1080, 1920] : [1920, 1080];
+          })();
+
+          const rawFaces = await detectFaces(framesDir, facesJsonPath, targetW, targetH);
+
+          if (rawFaces.length > 2) {
+            const smoothedFaces = smoothFaceTrack(rawFaces, 3);
+            const keyframes = buildCropKeyframes(
+              smoothedFaces,
+              targetW,
+              targetH,
+              project.ratio || '9:16'
+            );
+
+            if (keyframes.length > 0) {
+              sendcmdPath = path.join(tmpDir, 'sendcmd.txt');
+              await writeSendcmd(keyframes, sendcmdPath);
+              faceTrackEnabled = true;
+              console.log(`Face tracking: ${rawFaces.length} rostos detectados, crop dinâmico ativo`);
+            } else {
+              console.log('Face tracking: keyframes vazios — usando scale+pad padrão');
+            }
+          } else {
+            console.log(`Face tracking: poucos rostos detectados (${rawFaces.length}) — usando scale+pad padrão`);
+          }
+        } else {
+          console.log('Face tracking: poucos frames extraídos — usando scale+pad padrão');
+        }
+      } catch (trackErr) {
+        console.warn('Face tracking falhou (não crítico):', trackErr);
+        // Não falha o processamento — face tracking é melhoria opcional
+      }
     }
 
     // ── 6. Extração de áudio para Whisper ─────────────────────────
@@ -695,13 +956,64 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
         );
         Deno.writeTextFileSync(srtPath, wordsToSrt(clipWords));
 
-        // Render com legendas estilizadas
+        // Render com legendas + face tracking (se disponível)
         await new Promise<void>((resolve, reject) => {
-          ffmpeg(activeVideoPath)          // ← usa o vídeo limpo
+          const clipDuration = moment.end_s - moment.start_s;
+
+          // Monta o filtro de vídeo com ou sem face tracking
+          let vfFilter: string;
+
+          if (faceTrackEnabled && sendcmdPath) {
+            // Com face tracking:
+            // 1. sendcmd aplica crop dinâmico baseado na posição do rosto
+            // 2. scale normaliza para a resolução alvo
+            // 3. legendas são renderizadas por cima
+            const [targetW, targetH] = (() => {
+              const [rW, rH] = (project.ratio || '9:16').split(':').map(Number);
+              return rH > rW ? [1080, 1920] : [1920, 1080];
+            })();
+
+            // Ajusta timestamps do sendcmd para serem relativos ao início do clip
+            // (sendcmd usa timestamps absolutos do vídeo fonte)
+            const adjustedSendcmdPath = path.join(tmpDir, `sendcmd_${clipId}.txt`);
+            const sendcmdContent = await Deno.readTextFile(sendcmdPath);
+
+            // Filtra apenas as linhas dentro da janela do clip e reindexar
+            const filteredLines = sendcmdContent
+              .split('\n')
+              .filter(line => {
+                const t = parseFloat(line.split(' ')[0]);
+                return t >= moment.start_s && t <= moment.end_s + 1;
+              })
+              .map(line => {
+                const parts = line.split(' ');
+                const t = parseFloat(parts[0]);
+                parts[0] = (t - moment.start_s).toFixed(3);
+                return parts.join(' ');
+              });
+
+            if (filteredLines.length > 0) {
+              await Deno.writeTextFile(adjustedSendcmdPath, filteredLines.join('\n'));
+              vfFilter = [
+                `sendcmd=f=${adjustedSendcmdPath},crop=iw:ih:0:0`,
+                `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease`,
+                `pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black`,
+                buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs),
+              ].join(',');
+            } else {
+              // Fallback: nenhum keyframe para este clip
+              vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs);
+            }
+          } else {
+            // Sem face tracking — comportamento atual
+            vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs);
+          }
+
+          ffmpeg(activeVideoPath)
             .setStartTime(moment.start_s)
-            .setDuration(moment.end_s - moment.start_s)
+            .setDuration(clipDuration)
             .outputOptions([
-              `-vf ${buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs)}`,
+              `-vf ${vfFilter}`,
               '-c:a aac', '-b:a 128k', '-movflags +faststart',
             ])
             .output(clipPath)
@@ -769,6 +1081,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
           silences_removed:  isPaid ? silencesRemoved : 0,
           fillers_removed:   isPaid ? fillersRemoved  : 0,
           seconds_saved:     isPaid ? secondsSaved    : 0,
+          face_tracking_applied: faceTrackEnabled,
         });
 
         successCount++;
