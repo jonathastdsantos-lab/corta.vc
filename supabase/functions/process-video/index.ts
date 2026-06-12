@@ -35,19 +35,112 @@ function wordsToSrt(words: Array<{ word: string; start: number; end: number }>):
   return srt;
 }
 
-function buildSubtitleFilter(srtPath: string, style: string, isFree: boolean): string {
-  const watermark = isFree
-    ? `,drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
-    : '';
+function buildSubtitleFilter(
+  srtPath: string,
+  style: string,
+  isFree: boolean,
+  brandPrefs?: {
+    logo_url?: string | null;
+    brand_color?: string;
+    brand_font?: string;
+    logo_position?: string;
+    logo_size?: number;
+    cta_text?: string;
+    cta_enabled?: boolean;
+    logoLocalPath?: string; // caminho local do logo já baixado
+  }
+): string {
+  // ── Legenda ──────────────────────────────────────────────────────
+  const fontName = brandPrefs?.brand_font
+    ? ({
+        'Schibsted Grotesk': 'SchibstedGrotesk',
+        'Anton':  'Anton',
+        'Poppins':'Poppins',
+      }[brandPrefs.brand_font] ?? 'Arial')
+    : 'Arial';
+
   const STYLES: Record<string, string> = {
-    hormozi:    `FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Uppercase=1,Alignment=10`,
-    clean:      `FontName=Arial,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,Outline=0,Shadow=0,Alignment=2`,
-    karaoke:    `FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00E8543B,Outline=3,Shadow=1,Uppercase=1,Alignment=10`,
-    minimal:    `FontName=Arial,FontSize=22,Bold=0,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Alignment=2`,
-    neon:       `FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H005EF1FF,Outline=3,Shadow=2,Uppercase=1,Alignment=10`,
-    'bold-bar': `FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00111111,BackColour=&H00E8543B,BorderStyle=4,Outline=0,Uppercase=1,Alignment=2`,
+    hormozi:    `FontName=${fontName},FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Uppercase=1,Alignment=10`,
+    clean:      `FontName=${fontName},FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,Outline=0,Shadow=0,Alignment=2`,
+    karaoke:    `FontName=${fontName},FontSize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00E8543B,Outline=3,Shadow=1,Uppercase=1,Alignment=10`,
+    minimal:    `FontName=${fontName},FontSize=22,Bold=0,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Alignment=2`,
+    neon:       `FontName=${fontName},FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H005EF1FF,Outline=3,Shadow=2,Uppercase=1,Alignment=10`,
+    'bold-bar': `FontName=${fontName},FontSize=26,Bold=1,PrimaryColour=&H00111111,BackColour=&H00E8543B,BorderStyle=4,Outline=0,Uppercase=1,Alignment=2`,
   };
-  return `subtitles=${srtPath}:force_style='${STYLES[style] ?? STYLES['hormozi']}'${watermark}`;
+
+  const subtitleFilter = `subtitles=${srtPath}:force_style='${STYLES[style] ?? STYLES['hormozi']}'`;
+
+  // ── Filtros a empilhar ────────────────────────────────────────────
+  const filters: string[] = [subtitleFilter];
+
+  // ── Watermark corta.vc (só plano free) ───────────────────────────
+  if (isFree) {
+    filters.push(
+      `drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
+    );
+  }
+
+  // ── Logo da marca (planos pagos, se brand_prefs tiver logo) ───────
+  const logoPath = brandPrefs?.logoLocalPath;
+  if (!isFree && logoPath) {
+    const size = brandPrefs?.logo_size ?? 10;    // % da largura
+    const pos  = brandPrefs?.logo_position ?? 'br';
+
+    // Dimensão: size% da largura do vídeo (iw)
+    const logoW = `iw*${(size / 100).toFixed(3)}`;
+    const logoH = -1; // -1 = mantém proporção
+
+    // Margem fixa de 24px dos cantos
+    const MARGIN = 24;
+    const xMap: Record<string, string> = {
+      tl: `${MARGIN}`,
+      tr: `W-w-${MARGIN}`,
+      bl: `${MARGIN}`,
+      br: `W-w-${MARGIN}`,
+    };
+    const yMap: Record<string, string> = {
+      tl: `${MARGIN}`,
+      tr: `${MARGIN}`,
+      bl: `H-h-${MARGIN}`,
+      br: `H-h-${MARGIN}`,
+    };
+
+    const ox = xMap[pos] ?? xMap['br'];
+    const oy = yMap[pos] ?? yMap['br'];
+
+    // movie filter: carrega o logo como stream separado, redimensiona e faz overlay
+    // Nota: fluent-ffmpeg usa -vf para filter_complex simples — para overlay com
+    // input adicional usamos a sintaxe de input inline do movie filter
+    filters.push(
+      `movie=${logoPath}[logo];[logo]scale=${logoW}:${logoH}[slogo];[in][slogo]overlay=${ox}:${oy}`
+    );
+  }
+
+  // ── CTA text (planos pagos, se habilitado) ────────────────────────
+  if (!isFree && brandPrefs?.cta_enabled && brandPrefs?.cta_text) {
+    const ctaText = brandPrefs.cta_text
+      .replace(/'/g, "'")     // escapa aspas simples
+      .replace(/:/g, '\\:')   // escapa dois-pontos (FFmpeg)
+      .replace(/\[/g, '\\[')  // escapa colchetes
+      .replace(/\]/g, '\\]')
+      .substring(0, 60);
+
+    // Cor da marca em formato ARGB do FFmpeg (0xAARRGGBB)
+    const hex = (brandPrefs.brand_color ?? '#e8543b').replace('#', '');
+    const r = hex.slice(0,2), g = hex.slice(2,4), b = hex.slice(4,6);
+    const ffColor = `0x${r}${g}${b}`;
+
+    // CTA fixo no rodapé: y = H - 80 (acima do último quinto do vídeo)
+    filters.push(
+      `drawtext=text='${ctaText}':fontcolor=${ffColor}:fontsize=22:` +
+      `x=(w-text_w)/2:y=H-80:shadowcolor=black@0.6:shadowx=1:shadowy=1:` +
+      `box=1:boxcolor=black@0.3:boxborderw=8`
+    );
+  }
+
+  // Se só tem o subtitle filter (sem overlay de logo), usa -vf simples
+  // Se tem overlay (movie filter), o filtro já está em formato filter_complex
+  return filters.join(',');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,7 +397,7 @@ serve(async (req) => {
 
     // ── 2. Verificar perfil e créditos ────────────────────────────
     const { data: profile } = await supabase
-      .from('profiles').select('credits, plan').eq('id', user_id).single();
+      .from('profiles').select('credits, plan, brand_prefs').eq('id', user_id).single();
     if (!profile) throw new Error('Perfil não encontrado');
 
     tmpDir = await Deno.makeTempDir();
@@ -558,8 +651,36 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
     const moments: Array<any> = JSON.parse(rawJson.substring(jStart, jEnd + 1));
     if (!moments.length) throw new Error('Nenhum momento selecionado pela IA');
 
-    // ── 10. Render de cada clip ───────────────────────────────────
-    const isFree = profile.plan === 'free';
+    // ── 10. Brand prefs: baixar logo localmente (uma vez, fora do loop) ──
+    const isFree    = profile.plan === 'free';
+    const brandPrefs: {
+      logo_url?: string | null;
+      brand_color?: string;
+      brand_font?: string;
+      logo_position?: string;
+      logo_size?: number;
+      cta_text?: string;
+      cta_enabled?: boolean;
+      logoLocalPath?: string;
+    } = profile.brand_prefs || {};
+
+    // Baixa o logo uma única vez para tmpDir (evita N downloads no loop)
+    if (!isFree && brandPrefs.logo_url) {
+      try {
+        const logoRes = await fetch(brandPrefs.logo_url);
+        if (logoRes.ok) {
+          const ext = brandPrefs.logo_url.split('.').pop()?.split('?')[0]?.toLowerCase() ?? 'png';
+          const logoLocalPath = path.join(tmpDir, `brand_logo.${ext}`);
+          Deno.writeFileSync(logoLocalPath, new Uint8Array(await logoRes.arrayBuffer()));
+          brandPrefs.logoLocalPath = logoLocalPath;
+          console.log(`Brand logo baixado: ${logoLocalPath}`);
+        }
+      } catch (e) {
+        console.warn('Falha ao baixar logo da marca, seguindo sem watermark personalizado:', e);
+        // Não falha o processamento — logo é opcional
+      }
+    }
+
     let successCount = 0;
 
     for (const moment of moments) {
@@ -580,7 +701,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
             .setStartTime(moment.start_s)
             .setDuration(moment.end_s - moment.start_s)
             .outputOptions([
-              `-vf ${buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree)}`,
+              `-vf ${buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs)}`,
               '-c:a aac', '-b:a 128k', '-movflags +faststart',
             ])
             .output(clipPath)
@@ -634,6 +755,16 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
           thumbnail_url:  thumbnailUrl,
           caption_style:  project.caption_style || 'hormozi',
           status:         'rendered',
+          transcript: (() => {
+            const clipW = activeWords.filter(
+              (w: Word) => w.start >= moment.start_s - 0.1 && w.end <= moment.end_s + 0.5
+            );
+            return clipW.map((w: Word) => ({
+              w: w.word,
+              s: parseFloat((w.start - moment.start_s).toFixed(3)),
+              e: parseFloat((w.end   - moment.start_s).toFixed(3)),
+            }));
+          })(),
           // ★ novos campos de cleanup
           silences_removed:  isPaid ? silencesRemoved : 0,
           fillers_removed:   isPaid ? fillersRemoved  : 0,

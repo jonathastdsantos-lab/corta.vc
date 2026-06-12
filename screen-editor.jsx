@@ -23,6 +23,86 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
   const [shareUrl, setShareUrl] = useState(null);
   const [sharing, setSharing] = useState(false);
 
+  // ── Transcrição real e edição por palavras ──
+  const [txWords, setTxWords]               = useState([]);
+  const [deletedIdxs, setDeletedIdxs]       = useState(new Set());
+  const [pendingRemovals, setPendingRemovals] = useState([]);
+  const [trimming, setTrimming]             = useState(false);
+  const [trimResult, setTrimResult]         = useState(null); // { new_duration, removed_seconds }
+  const [txLoaded, setTxLoaded]             = useState(false);
+
+  // ── Brand Kit ──────────────────────────────────────────────────
+  const [brand, setBrand]           = useState({
+    logo_url:      null,
+    brand_color:   '#e8543b',
+    brand_font:    'Schibsted Grotesk',
+    logo_position: 'br',
+    logo_size:     10,
+    cta_text:      '',
+    cta_enabled:   false,
+  });
+  const [brandLoading, setBrandLoading] = useState(false);
+  const [brandSaving,  setBrandSaving]  = useState(false);
+  const [brandSaved,   setBrandSaved]   = useState(false);
+  const [logoPreview,  setLogoPreview]  = useState(null);
+  const [logoFile,     setLogoFile]     = useState(null);
+
+  // Carrega transcript do clip (words[]) — banco > mock
+  useEffect(() => {
+    if (clip.transcript && Array.isArray(clip.transcript) && clip.transcript.length > 0) {
+      // Transcript real: { w, s, e } por palavra
+      setTxWords(clip.transcript);
+      setTxLoaded(true);
+    } else {
+      // Fallback: converte mock TRANSCRIPT em pseudo-words para UI consistente
+      const pseudo = [];
+      let t = 0;
+      for (const line of TRANSCRIPT) {
+        const clean = line.text.replace(/\*\*/g, '');
+        const words = clean.split(/\s+/).filter(Boolean);
+        for (const w of words) {
+          pseudo.push({ w, s: parseFloat(t.toFixed(2)), e: parseFloat((t + 0.4).toFixed(2)) });
+          t += 0.45;
+        }
+        t += 0.5; // pausa entre linhas
+      }
+      setTxWords(pseudo);
+    }
+  }, [clip.id]);
+
+  // Carrega brand_prefs do banco (ou do user object se já disponível)
+  useEffect(() => {
+    async function loadBrand() {
+      setBrandLoading(true);
+      try {
+        if (Supa.client) {
+          const { data: { user: authUser } } = await Supa.client.auth.getUser();
+          if (!authUser) return;
+          const { data: prof } = await Supa.client
+            .from('profiles')
+            .select('brand_prefs')
+            .eq('id', authUser.id)
+            .single();
+          if (prof?.brand_prefs && Object.keys(prof.brand_prefs).length > 0) {
+            setBrand(prev => ({ ...prev, ...prof.brand_prefs }));
+            if (prof.brand_prefs.logo_url) setLogoPreview(prof.brand_prefs.logo_url);
+          }
+        } else {
+          // Demo: carrega do localStorage
+          const u = JSON.parse(localStorage.getItem('corta_auth_v1') || 'null');
+          if (u?.brand_prefs) {
+            setBrand(prev => ({ ...prev, ...u.brand_prefs }));
+            if (u.brand_prefs.logo_url) setLogoPreview(u.brand_prefs.logo_url);
+          }
+        }
+      } catch (e) {
+        console.warn('loadBrand falhou:', e);
+      }
+      setBrandLoading(false);
+    }
+    loadBrand();
+  }, []);
+
   async function handleShare() {
     if (!Supa.client) {
       alert('Modo demo — no plano real geraria um link público de 24h.');
@@ -129,6 +209,182 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
       console.error(e);
     }
     setVariationsLoading(false);
+  }
+
+  // Marca/desmarca uma palavra como deletada
+  function toggleWordDelete(idx) {
+    setDeletedIdxs(prev => {
+      const next = new Set(prev);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
+      return next;
+    });
+  }
+
+  // Converte índices deletados → intervalos de tempo (agrupando consecutivos)
+  function buildRemovals(words, deleted) {
+    const sorted = [...deleted].sort((a, b) => a - b);
+    const removals = [];
+    let groupStart = null;
+    let groupEnd   = null;
+
+    for (const idx of sorted) {
+      const w = words[idx];
+      if (!w) continue;
+      if (groupStart === null) {
+        groupStart = w.s;
+        groupEnd   = w.e;
+      } else if (w.s - groupEnd < 0.15) {
+        // Palavra consecutiva ou muito próxima — estende o grupo
+        groupEnd = w.e;
+      } else {
+        removals.push({ s: groupStart, e: groupEnd + 0.03 });
+        groupStart = w.s;
+        groupEnd   = w.e;
+      }
+    }
+    if (groupStart !== null) removals.push({ s: groupStart, e: groupEnd + 0.03 });
+    return removals;
+  }
+
+  // Chama trim-clip e atualiza o clip localmente
+  async function applyTrim() {
+    const removals = buildRemovals(txWords, deletedIdxs);
+    if (!removals.length) return;
+
+    setTrimming(true);
+    setTrimResult(null);
+
+    try {
+      if (!Supa.client) {
+        // Demo: simula delay e mostra resultado
+        await new Promise(r => setTimeout(r, 1800));
+        const removed = removals.reduce((a, r) => a + (r.e - r.s), 0);
+        setTrimResult({ new_duration: (clip.dur || 38) - Math.round(removed), removed_seconds: parseFloat(removed.toFixed(1)) });
+        // Remove visualmente as palavras deletadas
+        setTxWords(prev => prev.filter((_, i) => !deletedIdxs.has(i)));
+        setDeletedIdxs(new Set());
+        window.showToast?.(lang === 'en' ? 'Demo: trim simulated ✓' : 'Demo: corte simulado ✓', { type: 'success' });
+        setTrimming(false);
+        return;
+      }
+
+      const { data: { session } } = await Supa.client.auth.getSession();
+      const res = await fetch(
+        window.CORTA_CONFIG.SUPABASE_URL + '/functions/v1/trim-clip',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({ clip_id: clip.id, removals }),
+        }
+      );
+
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Erro no trim-clip');
+
+      setTrimResult({ new_duration: data.new_duration, removed_seconds: data.removed_seconds });
+
+      // Atualiza transcript local com as palavras restantes (reindexadas pelo servidor)
+      if (data.words_remaining !== undefined) {
+        // Recarrega do banco para pegar transcript reindexado
+        const { data: updated } = await Supa.client
+          .from('clips').select('transcript, duration').eq('id', clip.id).single();
+        if (updated?.transcript) setTxWords(updated.transcript);
+      } else {
+        setTxWords(prev => prev.filter((_, i) => !deletedIdxs.has(i)));
+      }
+
+      setDeletedIdxs(new Set());
+      window.showToast?.(
+        lang === 'en'
+          ? `${data.removed_seconds}s removed — clip updated ✓`
+          : `${data.removed_seconds}s removidos — corte atualizado ✓`,
+        { type: 'success' }
+      );
+    } catch (e) {
+      window.showToast?.(
+        lang === 'en' ? `Trim failed: ${e.message}` : `Falha no corte: ${e.message}`,
+        { type: 'error' }
+      );
+      console.error(e);
+    }
+
+    setTrimming(false);
+  }
+
+  // Desfaz todas as deleções pendentes
+  function undoAllDeletes() {
+    setDeletedIdxs(new Set());
+    setTrimResult(null);
+  }
+
+  // Atualiza um campo do brand kit
+  function setBrandField(key, value) {
+    setBrand(prev => ({ ...prev, [key]: value }));
+    setBrandSaved(false);
+  }
+
+  // Upload do logo
+  async function handleLogoUpload(file) {
+    if (!file) return;
+    const allowed = ['image/png', 'image/svg+xml', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      window.showToast?.(lang === 'en' ? 'Use PNG, SVG or WebP' : 'Use PNG, SVG ou WebP', { type: 'error' });
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      window.showToast?.(lang === 'en' ? 'Logo must be under 2MB' : 'Logo deve ter menos de 2MB', { type: 'error' });
+      return;
+    }
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+    setBrandSaved(false);
+  }
+
+  // Salva brand_prefs (faz upload do logo se necessário, depois salva prefs)
+  async function saveBrandKit() {
+    setBrandSaving(true);
+    setBrandSaved(false);
+    try {
+      let finalLogoUrl = brand.logo_url;
+
+      // Se tem arquivo novo para upload
+      if (logoFile) {
+        if (Supa.client) {
+          const { data: { user: authUser } } = await Supa.client.auth.getUser();
+          finalLogoUrl = await Supa.uploadBrandLogo(logoFile, authUser.id);
+        } else {
+          // Demo: usa object URL local
+          finalLogoUrl = logoPreview;
+        }
+        setLogoFile(null);
+      }
+
+      const prefs = { ...brand, logo_url: finalLogoUrl };
+      setBrand(prefs);
+
+      if (Supa.client) {
+        const { data: { user: authUser } } = await Supa.client.auth.getUser();
+        await Supa.saveBrandPrefs(authUser.id, prefs);
+      } else {
+        await Supa.saveBrandPrefs(null, prefs); // demo
+      }
+
+      setBrandSaved(true);
+      window.showToast?.(
+        lang === 'en' ? 'Brand kit saved ✓' : 'Brand kit salvo ✓',
+        { type: 'success' }
+      );
+    } catch (e) {
+      window.showToast?.(
+        lang === 'en' ? `Save failed: ${e.message}` : `Falha ao salvar: ${e.message}`,
+        { type: 'error' }
+      );
+      console.error(e);
+    }
+    setBrandSaving(false);
   }
 
   const tabs = [
@@ -265,23 +521,113 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
               </div>
 
               <div className="panel-group">
-                <div className="pg-label">{lang === 'en' ? 'Transcript' : 'Transcrição'} · {lang === 'en' ? 'drag to reorder' : 'arraste para reordenar'}</div>
-                {lines.map((l, i) => (
-                  <div key={i} 
-                       className={`cap-line ${activeLine === i ? 'active' : ''}`} 
-                       onClick={() => setActiveLine(i)}
-                       draggable
-                       onDragStart={e => handleLineDragStart(e, i)}
-                       onDragOver={e => e.preventDefault()}
-                       onDrop={e => handleLineDrop(e, i)}
-                       style={{ cursor: 'grab' }}
-                  >
-                    <Icon name="more" size={14} style={{ opacity: 0.3, marginRight: 6, flexShrink: 0 }} />
-                    <span className="ts">{l.t}</span>
-                    <span className="ct" contentEditable suppressContentEditableWarning
-                      dangerouslySetInnerHTML={{ __html: l.text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+
+                {/* Cabeçalho com contador de deleções pendentes */}
+                <div className="pg-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>
+                    {lang === 'en' ? 'Transcript — click word to delete' : 'Transcrição — clique na palavra para deletar'}
+                  </span>
+                  {deletedIdxs.size > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--hot)', fontWeight: 700 }}>
+                      {deletedIdxs.size} {lang === 'en' ? 'marked' : 'marcadas'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Palavras em chips inline — modo palavra a palavra */}
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: '4px 3px',
+                  padding: '10px 12px', background: 'var(--surface-2)',
+                  borderRadius: 'var(--r)', border: '1px solid var(--border)',
+                  maxHeight: 220, overflowY: 'auto', lineHeight: 1,
+                }}>
+                  {txWords.map((w, i) => {
+                    const isDel = deletedIdxs.has(i);
+                    return (
+                      <button
+                        key={i}
+                        title={`${w.s.toFixed(2)}s → ${w.e.toFixed(2)}s`}
+                        onClick={() => toggleWordDelete(i)}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 3,
+                          padding: '3px 7px', borderRadius: 5, cursor: 'pointer',
+                          fontSize: 13, fontFamily: 'var(--font-ui)',
+                          border: isDel ? '1px solid var(--hot)' : '1px solid transparent',
+                          background: isDel ? 'rgba(248,113,113,.15)' : 'transparent',
+                          color: isDel ? 'var(--hot)' : 'var(--ink)',
+                          textDecoration: isDel ? 'line-through' : 'none',
+                          opacity: isDel ? 0.6 : 1,
+                          transition: 'all .1s',
+                        }}
+                      >
+                        {w.w}
+                        {isDel && (
+                          <span style={{ fontSize: 10, lineHeight: 1, opacity: .7 }}>×</span>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {txWords.length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--muted)', padding: '4px 0' }}>
+                      {lang === 'en' ? 'No transcript available for this clip.' : 'Transcrição não disponível para este corte.'}
+                    </div>
+                  )}
+                </div>
+
+                {/* Instrução */}
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <Icon name="info" size={12} />
+                  {lang === 'en'
+                    ? 'Click words to mark for removal, then apply.'
+                    : 'Clique nas palavras para marcar a remoção, depois aplique.'}
+                </div>
+
+                {/* Resultado do último trim */}
+                {trimResult && (
+                  <div style={{
+                    marginTop: 8, padding: '8px 12px', borderRadius: 'var(--r)',
+                    background: 'var(--surface-2)', border: '1px solid var(--border)',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}>
+                    <Icon name="checkCircle" size={15} style={{ color: 'var(--good)', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: 'var(--ink-2)', flex: 1 }}>
+                      {lang === 'en'
+                        ? `${trimResult.removed_seconds}s removed · new duration: ${trimResult.new_duration}s`
+                        : `${trimResult.removed_seconds}s removidos · duração final: ${trimResult.new_duration}s`}
+                    </span>
                   </div>
-                ))}
+                )}
+
+                {/* Barra de ações: Aplicar e Desfazer */}
+                {deletedIdxs.size > 0 && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <Btn
+                      variant="primary"
+                      size="sm"
+                      icon={trimming ? 'refresh' : 'scissors'}
+                      disabled={trimming}
+                      onClick={applyTrim}
+                      style={{ flex: 1 }}
+                    >
+                      {trimming
+                        ? (lang === 'en' ? 'Re-rendering…' : 'Re-renderizando…')
+                        : lang === 'en'
+                          ? `Remove ${deletedIdxs.size} word${deletedIdxs.size > 1 ? 's' : ''}`
+                          : `Remover ${deletedIdxs.size} palavra${deletedIdxs.size > 1 ? 's' : ''}`}
+                    </Btn>
+                    <Btn
+                      variant="ghost"
+                      size="sm"
+                      icon="undo"
+                      onClick={undoAllDeletes}
+                      disabled={trimming}
+                    >
+                      {lang === 'en' ? 'Undo' : 'Desfazer'}
+                    </Btn>
+                  </div>
+                )}
+
               </div>
 
               <div className="panel-group">
@@ -383,35 +729,243 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
 
           {tab === 'brand' && (
             <React.Fragment>
+
+              {/* ── Logo ───────────────────────────────────────── */}
               <div className="panel-group">
-                <div className="pg-label">{lang === 'en' ? 'Logo' : 'Logo'}</div>
-                <div className="dropzone" style={{ padding: 20 }}>
-                  <div className="dz-icon" style={{ width: 40, height: 40, marginBottom: 10 }}><Icon name="image" size={20} /></div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{lang === 'en' ? 'Drop your logo' : 'Solte seu logo'}</div>
-                  <div className="sub" style={{ fontSize: 12, marginTop: 2 }}>PNG · SVG</div>
-                </div>
+                <div className="pg-label">Logo</div>
+
+                {/* Preview do logo atual */}
+                {logoPreview && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 12px', background: 'var(--surface-2)',
+                    borderRadius: 'var(--r)', border: '1px solid var(--border)',
+                    marginBottom: 8,
+                  }}>
+                    <img
+                      src={logoPreview}
+                      alt="logo"
+                      style={{ height: 36, maxWidth: 100, objectFit: 'contain', borderRadius: 4 }}
+                      onError={() => setLogoPreview(null)}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>
+                        {lang === 'en' ? 'Logo uploaded' : 'Logo carregado'}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                        {lang === 'en' ? 'Click below to replace' : 'Clique abaixo para trocar'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setLogoPreview(null); setLogoFile(null); setBrandField('logo_url', null); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: 4, lineHeight: 0 }}
+                      title={lang === 'en' ? 'Remove logo' : 'Remover logo'}
+                    >
+                      <Icon name="x" size={16} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Drop zone */}
+                <label
+                  className="dropzone"
+                  style={{ padding: '14px 16px', cursor: 'pointer', display: 'block' }}
+                  onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                  onDragLeave={e => { e.currentTarget.style.borderColor = ''; }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    e.currentTarget.style.borderColor = '';
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) handleLogoUpload(f);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept="image/png,image/svg+xml,image/webp"
+                    style={{ display: 'none' }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ''; }}
+                  />
+                  <div className="dz-icon" style={{ width: 36, height: 36, marginBottom: 8 }}>
+                    <Icon name="upload" size={17} />
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {lang === 'en' ? 'Drop or click to upload' : 'Solte ou clique para enviar'}
+                  </div>
+                  <div className="sub" style={{ fontSize: 11, marginTop: 2 }}>PNG · SVG · WebP · max 2MB</div>
+                </label>
+
+                {/* Posição e tamanho do logo no vídeo */}
+                {(logoPreview || brand.logo_url) && (
+                  <React.Fragment>
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--faint)', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 7 }}>
+                        {lang === 'en' ? 'Position' : 'Posição'}
+                      </div>
+                      {/* Grid 2×2 de posição */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                        {[
+                          { id: 'tl', label: lang === 'en' ? '↖ Top left'    : '↖ Canto sup. esq.' },
+                          { id: 'tr', label: lang === 'en' ? '↗ Top right'   : '↗ Canto sup. dir.' },
+                          { id: 'bl', label: lang === 'en' ? '↙ Bottom left' : '↙ Canto inf. esq.' },
+                          { id: 'br', label: lang === 'en' ? '↘ Bottom right': '↘ Canto inf. dir.' },
+                        ].map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => setBrandField('logo_position', p.id)}
+                            style={{
+                              padding: '7px 10px', borderRadius: 'var(--r-sm)',
+                              border: `1.5px solid ${brand.logo_position === p.id ? 'var(--accent)' : 'var(--border)'}`,
+                              background: brand.logo_position === p.id ? 'var(--accent-soft)' : 'transparent',
+                              color: brand.logo_position === p.id ? 'var(--accent)' : 'var(--ink-2)',
+                              fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: '.12s',
+                            }}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Tamanho do logo (% da largura) */}
+                    <div style={{ marginTop: 10 }}>
+                      <div className="field-row">
+                        <span className="frl">
+                          <Icon name="resize" size={14} />
+                          {lang === 'en' ? 'Size' : 'Tamanho'} {brand.logo_size}%
+                        </span>
+                        <input
+                          type="range" min="5" max="25" step="1"
+                          value={brand.logo_size}
+                          onChange={e => setBrandField('logo_size', +e.target.value)}
+                          className="rng"
+                          style={{ flex: 1 }}
+                        />
+                      </div>
+                    </div>
+                  </React.Fragment>
+                )}
               </div>
+
+              {/* ── Cor da marca ────────────────────────────────── */}
               <div className="panel-group">
                 <div className="pg-label">{lang === 'en' ? 'Brand color' : 'Cor da marca'}</div>
-                <div className="swatch-row">
-                  {['var(--accent)', '#111', '#1f9d6b', '#2e6bff', '#7c5cff', '#e8543b'].map(c => <button key={c} className="swatch" style={{ background: c }} />)}
+                <div className="swatch-row" style={{ alignItems: 'center' }}>
+                  {['#e8543b','#1f9d6b','#2e6bff','#7c5cff','#f59e0b','#111111','#ffffff'].map(c => (
+                    <button
+                      key={c}
+                      className={`swatch ${brand.brand_color === c ? 'on' : ''}`}
+                      style={{ background: c, borderColor: c === '#ffffff' ? 'var(--border)' : c }}
+                      onClick={() => setBrandField('brand_color', c)}
+                      title={c}
+                    />
+                  ))}
+                  {/* Input de cor livre */}
+                  <label style={{ position: 'relative', cursor: 'pointer' }} title={lang === 'en' ? 'Custom color' : 'Cor personalizada'}>
+                    <div
+                      className="swatch"
+                      style={{
+                        background: ['#e8543b','#1f9d6b','#2e6bff','#7c5cff','#f59e0b','#111111','#ffffff'].includes(brand.brand_color)
+                          ? 'var(--surface-3)' : brand.brand_color,
+                        border: '2px dashed var(--border)',
+                      }}
+                    >
+                      {!['#e8543b','#1f9d6b','#2e6bff','#7c5cff','#f59e0b','#111111','#ffffff'].includes(brand.brand_color) && (
+                        <span style={{ position:'absolute',inset:0,display:'grid',placeItems:'center',color:'#fff',fontSize:14,fontWeight:800,textShadow:'0 1px 2px rgba(0,0,0,.5)' }}>✓</span>
+                      )}
+                    </div>
+                    <input
+                      type="color"
+                      value={brand.brand_color}
+                      onChange={e => setBrandField('brand_color', e.target.value)}
+                      style={{ position:'absolute',opacity:0,inset:0,cursor:'pointer',width:'100%',height:'100%' }}
+                    />
+                  </label>
+                </div>
+                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 14, height: 14, borderRadius: 3, background: brand.brand_color, border: '1px solid var(--border)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--muted)' }}>{brand.brand_color}</span>
                 </div>
               </div>
+
+              {/* ── Fonte ───────────────────────────────────────── */}
               <div className="panel-group">
-                <div className="pg-label">{lang === 'en' ? 'Font' : 'Fonte'}</div>
-                {['Schibsted Grotesk', 'Anton', 'Poppins'].map((f, i) => (
-                  <div key={f} className="field-row" style={{ cursor: 'pointer' }}>
-                    <span className="frl" style={{ fontWeight: 700 }}>{f}</span>
-                    {i === 0 ? <Icon name="checkCircle" size={18} style={{ color: 'var(--accent)' }} /> : <div className="switch" />}
+                <div className="pg-label">{lang === 'en' ? 'Caption font' : 'Fonte das legendas'}</div>
+                {[
+                  { id: 'Schibsted Grotesk', label: 'Schibsted Grotesk', sample: 'Aa' },
+                  { id: 'Anton',             label: 'Anton',             sample: 'Aa' },
+                  { id: 'Poppins',           label: 'Poppins',           sample: 'Aa' },
+                ].map(f => (
+                  <div
+                    key={f.id}
+                    className="field-row"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setBrandField('brand_font', f.id)}
+                  >
+                    <span className="frl" style={{ fontFamily: f.id, fontWeight: 700 }}>
+                      <span style={{ fontSize: 16, marginRight: 6, color: 'var(--muted)' }}>{f.sample}</span>
+                      {f.label}
+                    </span>
+                    {brand.brand_font === f.id
+                      ? <Icon name="checkCircle" size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                      : <div style={{ width: 18, height: 18, borderRadius: 99, border: '1.5px solid var(--border)' }} />
+                    }
                   </div>
                 ))}
               </div>
+
+              {/* ── CTA / Encerramento ──────────────────────────── */}
               <div className="panel-group">
                 <div className="field-row">
-                  <span className="frl"><Icon name="bookmark" />{lang === 'en' ? 'Auto outro / CTA' : 'Encerramento / CTA'}</span>
-                  <Switch on={true} onClick={() => { }} />
+                  <span className="frl">
+                    <Icon name="bookmark" />
+                    {lang === 'en' ? 'Auto outro / CTA' : 'Encerramento / CTA'}
+                  </span>
+                  <Switch on={brand.cta_enabled} onClick={() => setBrandField('cta_enabled', !brand.cta_enabled)} />
+                </div>
+                {brand.cta_enabled && (
+                  <div style={{ marginTop: 8 }}>
+                    <input
+                      type="text"
+                      value={brand.cta_text}
+                      onChange={e => setBrandField('cta_text', e.target.value)}
+                      placeholder={lang === 'en' ? 'e.g. Follow for more ↓' : 'ex: Segue para mais conteúdo ↓'}
+                      maxLength={60}
+                      style={{
+                        width: '100%', padding: '8px 10px', fontSize: 13,
+                        borderRadius: 'var(--r)', border: '1.5px solid var(--border)',
+                        background: 'var(--surface)', color: 'var(--ink)', outline: 'none',
+                      }}
+                    />
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                      {60 - (brand.cta_text?.length || 0)} {lang === 'en' ? 'chars remaining' : 'chars restantes'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Botão salvar ────────────────────────────────── */}
+              <div className="panel-group">
+                <Btn
+                  variant="primary"
+                  size="lg"
+                  icon={brandSaving ? 'refresh' : brandSaved ? 'checkCircle' : 'save'}
+                  disabled={brandSaving || brandLoading}
+                  onClick={saveBrandKit}
+                  style={{ width: '100%' }}
+                >
+                  {brandSaving
+                    ? (lang === 'en' ? 'Saving…' : 'Salvando…')
+                    : brandSaved
+                      ? (lang === 'en' ? 'Saved ✓' : 'Salvo ✓')
+                      : (lang === 'en' ? 'Save brand kit' : 'Salvar brand kit')}
+                </Btn>
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 8, textAlign: 'center' }}>
+                  {lang === 'en'
+                    ? 'Applied automatically on all future renders'
+                    : 'Aplicado automaticamente em todos os próximos renders'}
                 </div>
               </div>
+
             </React.Fragment>
           )}
 

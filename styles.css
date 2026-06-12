@@ -1118,3 +1118,21 @@ button:focus-visible, a:focus-visible {
   .app { height: 100dvh; }
   #root { height: 100dvh; }
 }
+
+/* ── Transcript word chips ─────────────────────────────────────── */
+.trim-loading-overlay {
+  position: absolute; inset: 0;
+  background: rgba(var(--surface-rgb, 255,255,255), .7);
+  backdrop-filter: blur(2px);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; border-radius: var(--r-lg);
+  z-index: 10;
+}
+.trim-loading-overlay .spin-ring {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

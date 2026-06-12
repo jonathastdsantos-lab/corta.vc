@@ -47,8 +47,8 @@ const Supa = {
       const { data } = await this.client.auth.getUser();
       if (!data?.user) return null;
       const u = data.user;
-      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url, onboarding_done, onboarding_preferences').eq('id', u.id).single();
-      return { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits ?? 0, avatar: prof?.avatar_url, onboarding_done: prof?.onboarding_done ?? false, onboarding_preferences: prof?.onboarding_preferences || {} };
+      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url, onboarding_done, onboarding_preferences, brand_prefs').eq('id', u.id).single();
+      return { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits ?? 0, avatar: prof?.avatar_url, onboarding_done: prof?.onboarding_done ?? false, onboarding_preferences: prof?.onboarding_preferences || {}, brand_prefs: prof?.brand_prefs || {} };
     }
     return _demoRead();
   },
@@ -76,17 +76,17 @@ const Supa = {
       const { data, error } = await this.client.auth.signInWithPassword({ email: cleanEmail, password });
       if (error) return { error: this._translateErr(error.message) };
       const u = data.user;
-      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url, onboarding_done, onboarding_preferences').eq('id', u.id).single();
-      return { user: { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits ?? 0, avatar: prof?.avatar_url, onboarding_done: prof?.onboarding_done ?? false, onboarding_preferences: prof?.onboarding_preferences || {} } };
+      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url, onboarding_done, onboarding_preferences, brand_prefs').eq('id', u.id).single();
+      return { user: { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits ?? 0, avatar: prof?.avatar_url, onboarding_done: prof?.onboarding_done ?? false, onboarding_preferences: prof?.onboarding_preferences || {}, brand_prefs: prof?.brand_prefs || {} } };
     }
     await new Promise(r => setTimeout(r, 500));
-    const user = { id: 'demo-' + Date.now(), email, name: email.split('@')[0], initials: _initials('', email), demo: true, plan: 'free', credits: 10, onboarding_done: false };
+    const user = { id: 'demo-' + Date.now(), email, name: email.split('@')[0], initials: _initials('', email), demo: true, plan: 'free', credits: 10, onboarding_done: false, brand_prefs: {} };
     _demoWrite(user);
     return { user };
   },
 
   async signInDemo() {
-    const user = { id: 'demo-rafa', email: 'rafa@corta.vc', name: 'Rafael Alves', initials: 'RA', demo: true };
+    const user = { id: 'demo-rafa', email: 'rafa@corta.vc', name: 'Rafael Alves', initials: 'RA', demo: true, brand_prefs: {} };
     _demoWrite(user);
     return { user };
   },
@@ -120,6 +120,39 @@ const Supa = {
     }
     await new Promise(r => setTimeout(r, 800));
     return { path: `demo/${file?.name || 'video.mp4'}` };
+  },
+  // Salva brand_prefs no banco via RPC
+  async saveBrandPrefs(userId, prefs) {
+    if (this.client) {
+      const { error } = await this.client.rpc('save_brand_prefs', {
+        p_user_id: userId,
+        p_prefs: prefs,
+      });
+      if (error) throw new Error(error.message);
+    } else {
+      // Demo: persiste no localStorage junto com o user
+      const u = _demoRead();
+      if (u) { u.brand_prefs = prefs; _demoWrite(u); }
+    }
+  },
+
+  // Faz upload do logo para brand-assets/<uid>/<filename>
+  // Retorna a URL pública do arquivo
+  async uploadBrandLogo(file, uid) {
+    if (this.client) {
+      const ext  = file.name.split('.').pop()?.toLowerCase() || 'png';
+      const path = `${uid}/logo-${Date.now()}.${ext}`;
+      const { error } = await this.client.storage
+        .from('brand-assets')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw new Error(error.message);
+      const { data: { publicUrl } } = this.client.storage
+        .from('brand-assets')
+        .getPublicUrl(path);
+      return publicUrl;
+    }
+    // Demo: cria URL de objeto temporária
+    return URL.createObjectURL(file);
   },
 };
 
