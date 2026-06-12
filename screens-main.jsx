@@ -192,7 +192,9 @@ function ImportScreen({ lang, go, user }) {
         source_type: 'upload',
         storage_path: res.path,
         status: 'processing',
-        lang: clipLang
+        lang: clipLang,
+        ratio: ratio,
+        clip_prompt: prompt.trim() || null,   // ← intenção do usuário
       });
     }
 
@@ -214,7 +216,9 @@ function ImportScreen({ lang, go, user }) {
           : linkValue.includes('twitch') ? 'twitch' : 'link',
         source_url: linkValue.trim(),
         status: 'processing',
-        lang: clipLang
+        lang: clipLang,
+        ratio: ratio,
+        clip_prompt: prompt.trim() || null,   // ← intenção do usuário
       }).select().single();
       
       if (!error && proj) {

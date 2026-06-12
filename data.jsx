@@ -96,16 +96,20 @@ const STATS = [
 ];
 
 const PROMPT_IDEAS_PT = [
-  'Faça cortes sobre os melhores conselhos de carreira',
-  'Encontre os momentos mais engraçados',
-  'Cortes com ganchos polêmicos para gerar debate',
-  'Só os trechos com dados e estatísticas',
+  'Só os momentos com dados e estatísticas concretos',
+  'Cortes com ganchos polêmicos que geram debate',
+  'Trechos onde o apresentador conta uma história pessoal',
+  'Momentos com conselhos práticos e acionáveis',
+  'Trechos mais engraçados e descontraídos',
+  'Só as partes onde ele fala sobre dinheiro ou resultado',
 ];
 const PROMPT_IDEAS_EN = [
-  'Make clips about the best career advice',
-  'Find the funniest moments',
-  'Clips with bold hooks to spark debate',
-  'Only the parts with data and stats',
+  'Only moments with concrete data and statistics',
+  'Clips with bold controversial hooks',
+  'Parts where the speaker tells a personal story',
+  'Moments with practical, actionable advice',
+  'The funniest and most casual moments',
+  'Only the parts about money or results',
 ];
 
 // ---------- i18n ----------

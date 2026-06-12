@@ -35,6 +35,26 @@ function wordsToSrt(words: Array<{ word: string; start: number; end: number }>):
   return srt;
 }
 
+
+function ratioConfig(ratio: string): { w: number; h: number; scaleFilter: string } {
+  const [rW, rH] = ratio.split(':').map(Number);
+  let w: number, h: number;
+
+  if (!rW || !rH || rW === rH) {
+    w = 1080; h = 1080;
+  } else if (rH > rW) {
+    w = 1080; h = 1920;
+  } else {
+    w = 1920; h = 1080;
+  }
+
+  const scaleFilter =
+    `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+    `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;
+
+  return { w, h, scaleFilter };
+}
+
 function buildSubtitleFilter(srtPath: string, style: string, isFree: boolean): string {
   const watermark = isFree
     ? `,drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
@@ -545,6 +565,423 @@ function round3(n: number): number { return Math.round(n * 1000) / 1000; }
 function round4(n: number): number { return Math.round(n * 10000) / 10000; }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MÓDULO B-ROLL
+// Pipeline: Claude analisa segmento → Pexels API → download → FFmpeg concat
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface BrollSegment {
+  start_s: number;    // início relativo ao clip (não ao vídeo original)
+  end_s:   number;    // fim relativo ao clip
+  keyword: string;    // termo de busca gerado pelo Claude
+  localPath?: string; // caminho do MP4 baixado localmente
+}
+
+interface BrollPlan {
+  segments: BrollSegment[];
+  totalGapSeconds: number;
+}
+
+// 1. Claude analisa o transcript do clip e decide ONDE inserir B-roll e com qual keyword.
+// Retorna até maxSegments posições, priorizando menções a conceitos visuais.
+async function planBroll(
+  clipWords: Array<{ word: string; start: number; end: number }>,
+  clipDurationS: number,
+  niche: string,
+  anthropic: Anthropic,
+  maxSegments: number = 3
+): Promise<BrollPlan> {
+  if (clipWords.length < 5 || clipDurationS < 10) {
+    return { segments: [], totalGapSeconds: 0 };
+  }
+
+  // Reconstrói o texto do clip com timestamps para facilitar análise
+  const wordList = clipWords
+    .map(w => `[${w.start.toFixed(1)}s] ${w.word}`)
+    .join(' ');
+
+  const prompt = `Você analisa transcrições de vídeos curtos para decidir onde inserir B-roll (imagens de fundo).
+
+TRANSCRIPT (${clipDurationS.toFixed(0)}s total):
+${wordList}
+
+NICHO: ${niche}
+
+Identifique até ${maxSegments} momentos onde B-roll visual enriqueceria o conteúdo.
+Priorize: menções a lugares, objetos, ações, conceitos abstratos, estatísticas.
+Evite: início (<3s), fim (>duração-3s), durante frases incompletas.
+Cada segmento deve ter entre 2s e 5s de duração.
+
+Responda SOMENTE com JSON válido, sem markdown:
+[{
+  "start_s": number,
+  "end_s": number,
+  "keyword": "termo em inglês para buscar no Pexels (1-3 palavras, sem aspas)"
+}]
+
+Se não houver bons momentos, retorne: []`;
+
+  try {
+    const res = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = res.content[0].type === 'text' ? res.content[0].text : '';
+    const jStart = raw.indexOf('[');
+    const jEnd   = raw.lastIndexOf(']');
+    if (jStart === -1) return { segments: [], totalGapSeconds: 0 };
+
+    const parsed: Array<{ start_s: number; end_s: number; keyword: string }> =
+      JSON.parse(raw.substring(jStart, jEnd + 1));
+
+    // Valida e sanitiza cada segmento
+    const valid = parsed
+      .filter(s =>
+        typeof s.start_s === 'number' &&
+        typeof s.end_s   === 'number' &&
+        typeof s.keyword === 'string' &&
+        s.end_s - s.start_s >= 1.5 &&
+        s.end_s - s.start_s <= 6 &&
+        s.start_s >= 2 &&
+        s.end_s <= clipDurationS - 2 &&
+        s.keyword.trim().length > 0
+      )
+      .slice(0, maxSegments)
+      .map(s => ({
+        start_s: parseFloat(s.start_s.toFixed(3)),
+        end_s:   parseFloat(s.end_s.toFixed(3)),
+        keyword: s.keyword.trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').substring(0, 50),
+      }));
+
+    const totalGapSeconds = valid.reduce((a, s) => a + (s.end_s - s.start_s), 0);
+    console.log(`B-roll plan: ${valid.length} segmentos (${totalGapSeconds.toFixed(1)}s)`);
+
+    return { segments: valid, totalGapSeconds };
+  } catch (e) {
+    console.warn('planBroll falhou:', e);
+    return { segments: [], totalGapSeconds: 0 };
+  }
+}
+
+// 2. Busca vídeo no Pexels API e baixa localmente.
+// Retorna o caminho local ou null se falhar.
+async function fetchPexelsVideo(
+  keyword: string,
+  targetDurationS: number,
+  targetW: number,
+  targetH: number,
+  destPath: string,
+  pexelsKey: string
+): Promise<string | null> {
+  try {
+    // Orientação: portrait para 9:16, landscape para 16:9 e 1:1
+    const orientation = targetH > targetW ? 'portrait' : 'landscape';
+
+    const searchRes = await fetch(
+      `https://api.pexels.com/videos/search?` +
+      `query=${encodeURIComponent(keyword)}&` +
+      `orientation=${orientation}&` +
+      `size=medium&` +
+      `per_page=10&` +
+      `page=1`,
+      { headers: { Authorization: pexelsKey } }
+    );
+
+    if (!searchRes.ok) {
+      console.warn(`Pexels search falhou para "${keyword}": ${searchRes.status}`);
+      return null;
+    }
+
+    const data = await searchRes.json();
+    const videos: Array<any> = data.videos ?? [];
+
+    if (!videos.length) {
+      console.log(`Pexels: nenhum resultado para "${keyword}"`);
+      return null;
+    }
+
+    // Escolhe o vídeo com duração mais próxima do target (±2s de tolerância)
+    // Se nenhum for próximo, pega o mais curto que seja >= targetDuration
+    const target = targetDurationS;
+    const sorted = videos
+      .filter(v => v.duration >= target - 1)
+      .sort((a, b) => Math.abs(a.duration - target) - Math.abs(b.duration - target));
+
+    const chosen = sorted[0] ?? videos.sort((a, b) => b.duration - a.duration)[0];
+    if (!chosen) return null;
+
+    // Escolhe o arquivo de vídeo com resolução mais próxima do target
+    const files: Array<any> = chosen.video_files ?? [];
+    const targetPixels = targetW * targetH;
+
+    const bestFile = files
+      .filter(f => f.file_type === 'video/mp4' && f.link)
+      .sort((a, b) => {
+        const diffA = Math.abs((a.width * a.height) - targetPixels);
+        const diffB = Math.abs((b.width * b.height) - targetPixels);
+        return diffA - diffB;
+      })[0];
+
+    if (!bestFile?.link) return null;
+
+    // Download do arquivo de vídeo
+    const dlRes = await fetch(bestFile.link);
+    if (!dlRes.ok) {
+      console.warn(`Pexels download falhou: ${dlRes.status}`);
+      return null;
+    }
+
+    const bytes = new Uint8Array(await dlRes.arrayBuffer());
+    if (bytes.length < 10_000) return null; // arquivo suspeito
+
+    Deno.writeFileSync(destPath, bytes);
+    console.log(`Pexels: baixado "${keyword}" (${(bytes.length / 1024).toFixed(0)}KB)`);
+    return destPath;
+
+  } catch (e) {
+    console.warn(`fetchPexelsVideo "${keyword}" falhou:`, e);
+    return null;
+  }
+}
+
+// 3. Baixa todos os B-rolls necessários para um clip (paralelo, com timeout).
+// Retorna o plano com `localPath` preenchido onde o download funcionou.
+async function downloadBrolls(
+  plan: BrollPlan,
+  tmpDir: string,
+  clipId: string,
+  targetW: number,
+  targetH: number,
+  pexelsKey: string
+): Promise<BrollPlan> {
+  if (!plan.segments.length) return plan;
+
+  // Downloads em paralelo com Promise.allSettled (falhas individuais não cancelam os outros)
+  const downloads = plan.segments.map(async (seg, i) => {
+    const destPath = path.join(tmpDir, `broll_${clipId}_${i}.mp4`);
+    const localPath = await fetchPexelsVideo(
+      seg.keyword,
+      seg.end_s - seg.start_s,
+      targetW,
+      targetH,
+      destPath,
+      pexelsKey
+    );
+    return { ...seg, localPath: localPath ?? undefined };
+  });
+
+  // Timeout de 20s para todos os downloads juntos
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('B-roll download timeout')), 20_000)
+  );
+
+  let results: BrollSegment[];
+  try {
+    results = await Promise.race([
+      Promise.all(downloads),
+      timeoutPromise,
+    ]) as BrollSegment[];
+  } catch (_) {
+    // Timeout ou falha geral: usa o que já foi concluído
+    const settled = await Promise.allSettled(downloads);
+    results = settled
+      .filter(r => r.status === 'fulfilled')
+      .map(r => (r as PromiseFulfilledResult<BrollSegment>).value);
+  }
+
+  const successCount = results.filter(r => r.localPath).length;
+  console.log(`B-roll downloads: ${successCount}/${plan.segments.length} OK`);
+
+  return {
+    segments: results,
+    totalGapSeconds: results
+      .filter(r => r.localPath)
+      .reduce((a, s) => a + (s.end_s - s.start_s), 0),
+  };
+}
+
+// 4. Monta o clip final com B-roll intercalado usando FFmpeg concat.
+// Estratégia: divide o clip original em segmentos, intercala os B-rolls,
+// depois adiciona as legendas sobre o resultado final.
+async function renderWithBroll(
+  sourceVideo: string,
+  srtPath: string,
+  plan: BrollPlan,
+  clipStartS: number,  // start no vídeo fonte
+  clipEndS: number,    // end no vídeo fonte
+  targetW: number,
+  targetH: number,
+  vfSubtitleFilter: string,  // filtro de legendas já montado
+  outputPath: string,
+  tmpDir: string,
+  clipId: string
+): Promise<boolean> {
+  const activeBrolls = plan.segments.filter(s => s.localPath);
+  if (!activeBrolls.length) return false;
+
+  // Etapa A: extrai o clip original em segmentos (evitando os slots de B-roll)
+  const clipDuration = clipEndS - clipStartS;
+  const scaleFilter  = `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;
+
+  // Ordena segmentos por tempo
+  const sorted = [...activeBrolls].sort((a, b) => a.start_s - b.start_s);
+
+  // Constrói a lista de partes: alternando main video e B-roll
+  interface Part { type: 'main' | 'broll'; start: number; end: number; localPath?: string; }
+  const parts: Part[] = [];
+  let cursor = 0;
+
+  for (const seg of sorted) {
+    // Parte do vídeo principal antes deste B-roll
+    if (seg.start_s > cursor + 0.1) {
+      parts.push({ type: 'main', start: cursor, end: seg.start_s });
+    }
+    // B-roll
+    parts.push({ type: 'broll', start: seg.start_s, end: seg.end_s, localPath: seg.localPath });
+    cursor = seg.end_s;
+  }
+  // Parte final do vídeo principal
+  if (cursor < clipDuration - 0.1) {
+    parts.push({ type: 'main', start: cursor, end: clipDuration });
+  }
+
+  // Etapa B: extrai cada parte em um arquivo temporário
+  const partPaths: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const partPath = path.join(tmpDir, `part_${clipId}_${i}.mp4`);
+
+    if (part.type === 'main') {
+      // Extrai segmento do vídeo original
+      const segDuration = part.end - part.start;
+      const absStart    = clipStartS + part.start;
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(sourceVideo)
+          .setStartTime(absStart)
+          .setDuration(segDuration)
+          .outputOptions([
+            `-vf ${scaleFilter}`,
+            '-c:v libx264', '-preset fast', '-crf 22',
+            '-c:a aac', '-b:a 128k', '-movflags +faststart',
+            '-avoid_negative_ts', 'make_zero',
+          ])
+          .output(partPath)
+          .on('end', resolve)
+          .on('error', reject)
+          .run();
+      });
+    } else {
+      // Prepara o B-roll: recorta para a duração exata, escala para o ratio alvo
+      const brollDuration = part.end - part.start;
+      const brollDur      = brollDuration;
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(part.localPath!)
+          .setStartTime(0)
+          .setDuration(brollDur)
+          .outputOptions([
+            // Escala B-roll para o ratio alvo + pads se necessário
+            `-vf ${scaleFilter}`,
+            // Sem áudio no B-roll — mantém o áudio original do clip principal
+            '-an',
+            '-c:v libx264', '-preset fast', '-crf 22',
+            '-movflags +faststart',
+            '-avoid_negative_ts', 'make_zero',
+          ])
+          .output(partPath)
+          .on('end', resolve)
+          .on('error', (err) => {
+            console.warn(`B-roll part ${i} falhou:`, err.message);
+            resolve(); // não rejeita — parte será ignorada no concat
+          })
+          .run();
+      });
+
+      // Verifica se a parte foi gerada com sucesso
+      try {
+        const stat = await Deno.stat(partPath);
+        if (stat.size < 5_000) {
+          // Arquivo suspeito — substitui por preto mudo de mesma duração
+          await new Promise<void>((resolve, reject) => {
+            ffmpeg()
+              .input(`color=black:size=${targetW}x${targetH}:rate=30`)
+              .inputOption('-f lavfi')
+              .setDuration(brollDur)
+              .outputOptions([
+                `-vf scale=${targetW}:${targetH}`,
+                '-c:v libx264', '-preset fast', '-crf 22',
+                '-movflags +faststart',
+              ])
+              .output(partPath)
+              .on('end', resolve).on('error', reject).run();
+          });
+        }
+      } catch (_) {}
+    }
+
+    // Verifica se a parte existe antes de adicionar ao concat
+    try {
+      const st = await Deno.stat(partPath);
+      if (st.size > 1_000) partPaths.push(partPath);
+    } catch (_) {}
+  }
+
+  if (partPaths.length < 2) return false;
+
+  // Etapa C: concat de todas as partes em um único arquivo intermediário
+  const concatListPath  = path.join(tmpDir, `concat_${clipId}.txt`);
+  const concatVideoPath = path.join(tmpDir, `concat_${clipId}.mp4`);
+
+  // Arquivo de lista para ffmpeg concat demuxer
+  const concatLines = partPaths.map(p => `file '${p}'`).join('\n');
+  Deno.writeTextFileSync(concatListPath, concatLines);
+
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg()
+      .input(concatListPath)
+      .inputOptions(['-f concat', '-safe 0'])
+      .outputOptions([
+        '-c:v libx264', '-preset fast', '-crf 22',
+        '-c:a aac', '-b:a 128k',
+        '-movflags +faststart',
+      ])
+      .output(concatVideoPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+
+  // Verifica integridade do concat
+  try {
+    const stat = await Deno.stat(concatVideoPath);
+    if (stat.size < 50_000) return false;
+  } catch (_) { return false; }
+
+  // Etapa D: adiciona legendas sobre o vídeo com B-roll
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg(concatVideoPath)
+      .outputOptions([
+        `-vf ${vfSubtitleFilter}`,
+        '-c:a copy', '-movflags +faststart',
+      ])
+      .output(outputPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+
+  // Verifica output final
+  try {
+    const stat = await Deno.stat(outputPath);
+    return stat.size > 50_000;
+  } catch (_) {
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SERVE — PIPELINE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -655,28 +1092,55 @@ serve(async (req) => {
       .update({ duration_seconds: Math.round(durationSeconds) })
       .eq('id', project_id);
 
-    // ── 5. Conversão de aspect ratio ──────────────────────────────
-    const targetRatio = project.ratio || '9:16';
-    const [rW, rH] = targetRatio.split(':').map(Number);
-    let sourceVideoPath = videoPath;
-    let videoW = 1080;
-    let videoH = 1920;
+    // ── 5. Conversão de aspect ratio — prepara todos os formatos ──
+    const primaryRatio = project.ratio || '9:16';
+    const canMultiFormat = ['pro', 'business', 'ultra'].includes(profile.plan);
+    const extraRatios: string[] = [];
 
-    if (rW && rH) {
-      videoW = rH > rW ? 1080 : 1920;
-      videoH = rH > rW ? 1920 : 1080;
-      if (rW === rH) { videoW = 1080; videoH = 1080; }
+    if (canMultiFormat) {
+      if (primaryRatio !== '9:16') extraRatios.push('9:16');
+      if (primaryRatio !== '1:1')  extraRatios.push('1:1');
+    }
 
-      const scaleFilter  = `scale=${videoW}:${videoH}:force_original_aspect_ratio=decrease,pad=${videoW}:${videoH}:(ow-iw)/2:(oh-ih)/2:black`;
-      const convertedPath = path.join(tmpDir, 'converted.mp4');
+    const allRatios = [primaryRatio, ...extraRatios];
+    const ratioSources = new Map<string, { videoPath: string; w: number; h: number }>();
+
+    await Promise.all(allRatios.map(async (ratio) => {
+      const cfg = ratioConfig(ratio);
+      const convertedPath = path.join(tmpDir, `converted_${ratio.replace(':', 'x')}.mp4`);
+
       await new Promise<void>((resolve, reject) => {
         ffmpeg(videoPath)
-          .outputOptions([`-vf ${scaleFilter}`, '-c:a copy', '-movflags +faststart'])
+          .outputOptions([
+            `-vf ${cfg.scaleFilter}`,
+            '-c:a copy',
+            '-movflags +faststart',
+          ])
           .output(convertedPath)
-          .on('end', resolve).on('error', reject).run();
+          .on('end', resolve)
+          .on('error', (err: any) => {
+            console.warn(`Conversão ${ratio} falhou:`, err.message);
+            resolve();
+          })
+          .run();
       });
-      sourceVideoPath = convertedPath;
+
+      try {
+        const stat = await Deno.stat(convertedPath);
+        if (stat.size > 10_000) {
+          ratioSources.set(ratio, { videoPath: convertedPath, w: cfg.w, h: cfg.h });
+        }
+      } catch (_) {}
+    }));
+
+    if (!ratioSources.has(primaryRatio)) {
+      const cfg = ratioConfig(primaryRatio);
+      ratioSources.set(primaryRatio, { videoPath, w: cfg.w, h: cfg.h });
     }
+
+    const sourceVideoPath = ratioSources.get(primaryRatio)!.videoPath;
+    const { w: videoW, h: videoH } = ratioConfig(primaryRatio);
+    const targetRatio = primaryRatio;
 
     // ── 5.5. Face tracking ────────────────────────────────────────
     //
@@ -774,6 +1238,66 @@ serve(async (req) => {
     // ── 8. Silence detection + filler removal ─────────────────────
     let activeVideoPath = sourceVideoPath;
     let activeWords: Word[] = words;
+    const anthropic     = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
+    const maxClips      = Math.min(15, Math.max(5, Math.floor(durationSeconds / 180)));
+    const cleanFullText = activeWords.map(w => w.word).join(' ');
+
+    // Intenção do usuário (campo clip_prompt do projeto)
+    const userIntent = (project.clip_prompt ?? '').trim();
+    const hasIntent  = userIntent.length > 0;
+
+    // ── Seção de intenção: instrução extra quando o usuário preencheu o prompt
+    //
+    // Com intenção: Claude PRIORIZA momentos que correspondem ao tema pedido.
+    //   O maxClips é reduzido se necessário para manter relevância.
+    //   Se não encontrar momentos suficientes, pode incluir os melhores disponíveis.
+    //
+    // Sem intenção: comportamento padrão — seleciona os mais virais.
+    // ────────────────────────────────────────────────────────────────────────────
+
+    const intentSection = hasIntent ? `
+INTENÇÃO DO USUÁRIO (PRIORIDADE MÁXIMA):
+"${userIntent}"
+
+INSTRUÇÕES PARA A INTENÇÃO:
+- Selecione APENAS momentos que correspondam diretamente à intenção acima
+- Se a intenção especifica um tema (ex: "finanças"), inclua SOMENTE trechos sobre esse tema
+- Se a intenção especifica uma emoção (ex: "engraçado"), inclua SOMENTE os momentos com essa emoção
+- Se a intenção especifica um formato (ex: "apenas dados e estatísticas"), filtre rigorosamente
+- Se não houver momentos suficientes que satisfaçam a intenção, inclua os mais próximos e reduza o count
+- O campo "hook" deve descrever como este momento específico satisfaz a intenção do usuário
+- NÃO inclua momentos que não se relacionem com a intenção, mesmo que sejam viralmente fortes
+` : `
+SEM INTENÇÃO ESPECÍFICA: selecione os ${maxClips} momentos mais virais do vídeo.
+`;
+
+    const claudePrompt = `Você é um especialista em conteúdo viral para redes sociais brasileiras (TikTok, Reels, Shorts).
+Analise esta transcrição e selecione os melhores momentos para cortes virais.
+${intentSection}
+TRANSCRIÇÃO COMPLETA:
+${cleanFullText}
+
+TIMESTAMPS DAS PALAVRAS (use para calcular start_s e end_s precisos):
+${JSON.stringify(activeWords.slice(0, 500))}
+
+NICHO: ${project.niche || 'geral'}
+DURAÇÃO ALVO: 30–90 segundos por corte
+QUANTIDADE ALVO: ${hasIntent ? \`até \${maxClips} (pode ser menos se a intenção filtrar muito)\` : maxClips}
+
+Retorne SOMENTE um JSON array válido, sem markdown, sem texto antes ou depois:
+[{
+  "start_s": number,
+  "end_s": number,
+  "title": "título com até 60 chars e 1 emoji",
+  "caption": "frase impactante com a palavra mais forte entre {chaves}",
+  "hook": "${hasIntent ? 'como este momento satisfaz a intenção do usuário' : 'tipo do gancho'}",
+  "score": number entre 0 e 100,
+  "hashtags": ["#tag1","#tag2","#tag3","#tag4","#tag5"],
+  "niche": "${project.niche || 'geral'}"
+}]
+
+Critérios de score alto: gancho nos 3s iniciais, dado surpreendente, emoção forte, pergunta curiosa.
+Excluir: silêncios >5s, apresentações genéricas, frases incompletas.\`;
     let silencesRemoved = 0;
     let fillersRemoved  = 0;
     let secondsSaved    = 0;
@@ -810,13 +1334,42 @@ serve(async (req) => {
     }
 
     // ── 9. Claude: seleciona os melhores momentos ─────────────────
-    const anthropic    = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
-    const maxClips     = Math.min(15, Math.max(5, Math.floor(durationSeconds / 180)));
+    const anthropic     = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
+    const maxClips      = Math.min(15, Math.max(5, Math.floor(durationSeconds / 180)));
     const cleanFullText = activeWords.map(w => w.word).join(' ');
 
-    const claudePrompt = `Você é um especialista em conteúdo viral para redes sociais brasileiras (TikTok, Reels, Shorts).
-Analise esta transcrição e selecione os ${maxClips} melhores momentos para cortes virais.
+    // Intenção do usuário (campo clip_prompt do projeto)
+    const userIntent = (project.clip_prompt ?? '').trim();
+    const hasIntent  = userIntent.length > 0;
 
+    // ── Seção de intenção: instrução extra quando o usuário preencheu o prompt
+    //
+    // Com intenção: Claude PRIORIZA momentos que correspondem ao tema pedido.
+    //   O maxClips é reduzido se necessário para manter relevância.
+    //   Se não encontrar momentos suficientes, pode incluir os melhores disponíveis.
+    //
+    // Sem intenção: comportamento padrão — seleciona os mais virais.
+    // ────────────────────────────────────────────────────────────────────────────
+
+    const intentSection = hasIntent ? `
+INTENÇÃO DO USUÁRIO (PRIORIDADE MÁXIMA):
+"${userIntent}"
+
+INSTRUÇÕES PARA A INTENÇÃO:
+- Selecione APENAS momentos que correspondam diretamente à intenção acima
+- Se a intenção especifica um tema (ex: "finanças"), inclua SOMENTE trechos sobre esse tema
+- Se a intenção especifica uma emoção (ex: "engraçado"), inclua SOMENTE os momentos com essa emoção
+- Se a intenção especifica um formato (ex: "apenas dados e estatísticas"), filtre rigorosamente
+- Se não houver momentos suficientes que satisfaçam a intenção, inclua os mais próximos e reduza o count
+- O campo "hook" deve descrever como este momento específico satisfaz a intenção do usuário
+- NÃO inclua momentos que não se relacionem com a intenção, mesmo que sejam viralmente fortes
+` : `
+SEM INTENÇÃO ESPECÍFICA: selecione os ${maxClips} momentos mais virais do vídeo.
+`;
+
+    const claudePrompt = `Você é um especialista em conteúdo viral para redes sociais brasileiras (TikTok, Reels, Shorts).
+Analise esta transcrição e selecione os melhores momentos para cortes virais.
+${intentSection}
 TRANSCRIÇÃO COMPLETA:
 ${cleanFullText}
 
@@ -825,6 +1378,7 @@ ${JSON.stringify(activeWords.slice(0, 500))}
 
 NICHO: ${project.niche || 'geral'}
 DURAÇÃO ALVO: 30–90 segundos por corte
+QUANTIDADE ALVO: ${hasIntent ? \`até \${maxClips} (pode ser menos se a intenção filtrar muito)\` : maxClips}
 
 Retorne SOMENTE um JSON array válido, sem markdown, sem texto antes ou depois:
 [{
@@ -832,7 +1386,7 @@ Retorne SOMENTE um JSON array válido, sem markdown, sem texto antes ou depois:
   "end_s": number,
   "title": "título com até 60 chars e 1 emoji",
   "caption": "frase impactante com a palavra mais forte entre {chaves}",
-  "hook": "tipo do gancho",
+  "hook": "${hasIntent ? 'como este momento satisfaz a intenção do usuário' : 'tipo do gancho'}",
   "score": number entre 0 e 100,
   "hashtags": ["#tag1","#tag2","#tag3","#tag4","#tag5"],
   "niche": "${project.niche || 'geral'}"
@@ -857,125 +1411,215 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
 
     // ── 10. Render de cada clip ───────────────────────────────────
     const isFree = profile.plan === 'free';
+    // ── B-roll setup (uma vez por projeto, fora do loop) ─────────
+    const pexelsKey   = Deno.env.get('PEXELS_API_KEY') ?? '';
+    const enableBroll = !isFree && pexelsKey.length > 0;
+
+    // Dimensões do vídeo alvo (usadas para busca de orientação no Pexels)
+    const [brollW, brollH] = (() => {
+      const [rW, rH] = (project.ratio || '9:16').split(':').map(Number);
+      if (!rW || !rH) return [1080, 1920];
+      if (rH > rW)  return [1080, 1920]; // 9:16 portrait
+      if (rW > rH)  return [1920, 1080]; // 16:9 landscape
+      return [1080, 1080];               // 1:1 square
+    })();
+
+    let brollAppliedCount = 0;
+
     let successCount = 0;
+    const momentsCount = moments.length;
+    const formatsCount = allRatios.length;
 
     for (const moment of moments) {
-      const clipId    = crypto.randomUUID();
-      const clipPath  = path.join(tmpDir, `${clipId}.mp4`);
-      const thumbPath = path.join(tmpDir, `${clipId}.jpg`);
-      const srtPath   = path.join(tmpDir, `${clipId}.srt`);
+      const clipWords = activeWords.filter(w =>
+        w.start >= moment.start_s && w.end <= moment.end_s + 1
+      );
+      
+      const transcriptData = (() => {
+        const clipW = activeWords.filter(
+          (w: Word) => w.start >= moment.start_s - 0.1 && w.end <= moment.end_s + 0.5
+        );
+        return clipW.map((w: Word) => ({
+          w: w.word,
+          s: parseFloat((w.start - moment.start_s).toFixed(3)),
+          e: parseFloat((w.end   - moment.start_s).toFixed(3)),
+        }));
+      })();
 
-      try {
-        const clipWords = activeWords.filter(w => w.start >= moment.start_s && w.end <= moment.end_s + 1);
-        Deno.writeTextFileSync(srtPath, wordsToSrt(clipWords));
-
-        // ── Monta o -vf: face tracking + legendas ──────────────────
-        let vfFilter: string;
-
-        if (faceTrackEnabled && smoothedFaces.length > 0) {
-          // Gera sendcmd.txt específico para este clip (timestamps relativos ao início)
-          const sendcmdPath = path.join(tmpDir, `sendcmd_${clipId}.txt`);
-          const hasSendcmd  = await writeSendcmd(
-            smoothedFaces,
-            sendcmdPath,
-            videoW, videoH,
-            targetRatio,
-            moment.start_s,
-            moment.end_s
+      // ── B-roll setup (compartilhado entre formatos) ─────────────
+      let planWithFiles: any = null;
+      if (enableBroll) {
+        try {
+          const plan = await planBroll(
+            clipWords,
+            moment.end_s - moment.start_s,
+            project.niche || 'geral',
+            anthropic,
+            2
           );
+          if (plan.segments.length > 0) {
+            planWithFiles = await downloadBrolls(
+              plan,
+              tmpDir,
+              crypto.randomUUID(),
+              brollW,
+              brollH,
+              pexelsKey
+            );
+            if (!planWithFiles.segments.some((s: any) => s.localPath)) {
+              planWithFiles = null;
+            }
+          }
+        } catch (brollErr) {
+          console.warn(`B-roll setup falhou (não crítico):`, brollErr);
+        }
+      }
 
-          if (hasSendcmd) {
-            // Filtro completo:
-            //   1. sendcmd aplica crop dinâmico baseado no rosto
-            //   2. scale normaliza para resolução alvo
-            //   3. setsar garante SAR 1:1 após crop
-            //   4. subtitles renderiza legendas
-            vfFilter = [
-              `sendcmd=f=${sendcmdPath}`,
-              `crop=iw:ih:0:0`,                             // crop inicial "neutro" (atualizado pelo sendcmd)
-              `scale=${videoW}:${videoH}:force_original_aspect_ratio=decrease`,
-              `pad=${videoW}:${videoH}:(ow-iw)/2:(oh-ih)/2:black`,
-              `setsar=1`,
-              buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree),
-            ].join(',');
+      const renderResults = await Promise.allSettled(
+        allRatios.map(async (ratio) => {
+          const src = ratioSources.get(ratio);
+          if (!src) throw new Error(`Source não encontrado para ratio ${ratio}`);
+
+          const clipId    = crypto.randomUUID();
+          const clipPath  = path.join(tmpDir, `${clipId}.mp4`);
+          const thumbPath = path.join(tmpDir, `${clipId}.jpg`);
+          const srtPath   = path.join(tmpDir, `${clipId}.srt`);
+          
+          Deno.writeTextFileSync(srtPath, wordsToSrt(clipWords));
+
+          let vfFilter: string;
+          const isPrimaryRatio = ratio === primaryRatio;
+
+          if (isPrimaryRatio && faceTrackEnabled && smoothedFaces.length > 0) {
+            const sendcmdPath = path.join(tmpDir, `sendcmd_${clipId}.txt`);
+            const hasSendcmd  = await writeSendcmd(
+              smoothedFaces,
+              sendcmdPath,
+              src.w, src.h,
+              targetRatio,
+              moment.start_s,
+              moment.end_s
+            );
+
+            if (hasSendcmd) {
+              vfFilter = [
+                `sendcmd=f=${sendcmdPath}`,
+                `crop=iw:ih:0:0`,
+                `scale=${src.w}:${src.h}:force_original_aspect_ratio=decrease`,
+                `pad=${src.w}:${src.h}:(ow-iw)/2:(oh-ih)/2:black`,
+                `setsar=1`,
+                buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree),
+              ].join(',');
+            } else {
+              vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree);
+            }
           } else {
-            // Menos de 2 keyframes no clip — usa scale+pad normal
             vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree);
           }
-        } else {
-          // Sem face tracking — comportamento existente
-          vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree);
-        }
 
-        await new Promise<void>((resolve, reject) => {
-          ffmpeg(activeVideoPath)
-            .setStartTime(moment.start_s)
-            .setDuration(moment.end_s - moment.start_s)
-            .outputOptions([
-              `-vf ${vfFilter}`,
-              '-c:a aac', '-b:a 128k', '-movflags +faststart',
-            ])
-            .output(clipPath)
-            .on('end', resolve)
-            .on('error', reject)
-            .run();
-        });
+          let brollSuccess = false;
+          if (planWithFiles) {
+            brollSuccess = await renderWithBroll(
+              src.videoPath,
+              srtPath,
+              planWithFiles,
+              moment.start_s,
+              moment.end_s,
+              src.w,
+              src.h,
+              vfFilter,
+              clipPath,
+              tmpDir,
+              clipId
+            );
+            if (brollSuccess && isPrimaryRatio) {
+              brollAppliedCount++;
+            }
+          }
 
-        await new Promise<void>((resolve, reject) => {
-          ffmpeg(clipPath)
-            .setStartTime(Math.min(2, (moment.end_s - moment.start_s) * 0.15))
-            .frames(1)
-            .output(thumbPath)
-            .on('end', resolve).on('error', reject).run();
-        });
+          if (!brollSuccess) {
+            await new Promise<void>((resolve, reject) => {
+              ffmpeg(src.videoPath)
+                .setStartTime(moment.start_s)
+                .setDuration(moment.end_s - moment.start_s)
+                .outputOptions([
+                  `-vf ${vfFilter}`,
+                  '-c:a aac', '-b:a 128k', '-movflags +faststart',
+                ])
+                .output(clipPath)
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+            });
+          }
 
-        const storagePath = `${user_id}/${project_id}/${clipId}.mp4`;
-        await supabase.storage.from('clips').upload(
-          storagePath, Deno.readFileSync(clipPath), { contentType: 'video/mp4' }
-        );
+          let thumbnailUrl: string | null = null;
+          if (isPrimaryRatio) {
+            await new Promise<void>((resolve, reject) => {
+              ffmpeg(clipPath)
+                .setStartTime(Math.min(2, (moment.end_s - moment.start_s) * 0.15))
+                .frames(1)
+                .output(thumbPath)
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+            });
 
-        let thumbnailUrl: string | null = null;
-        try {
-          const thumbStorage = `${user_id}/${project_id}/${clipId}.jpg`;
+            try {
+              const thumbStorage = `${user_id}/${project_id}/${clipId}.jpg`;
+              await supabase.storage.from('clips').upload(
+                thumbStorage, Deno.readFileSync(thumbPath), { contentType: 'image/jpeg' }
+              );
+              const { data: { publicUrl } } = supabase.storage.from('clips').getPublicUrl(thumbStorage);
+              thumbnailUrl = publicUrl;
+            } catch (_) {}
+          }
+
+          const storagePath = `${user_id}/${project_id}/${clipId}.mp4`;
           await supabase.storage.from('clips').upload(
-            thumbStorage, Deno.readFileSync(thumbPath), { contentType: 'image/jpeg' }
+            storagePath, Deno.readFileSync(clipPath), { contentType: 'video/mp4' }
           );
-          const { data: { publicUrl } } = supabase.storage.from('clips').getPublicUrl(thumbStorage);
-          thumbnailUrl = publicUrl;
-        } catch (_) {}
 
-        await supabase.from('clips').insert({
-          id:                      clipId,
-          project_id,
-          user_id,
-          title:                   moment.title,
-          caption:                 moment.caption,
-          hashtags:                moment.hashtags,
-          niche:                   moment.niche,
-          start_s:                 moment.start_s,
-          end_s:                   moment.end_s,
-          duration:                Math.round(moment.end_s - moment.start_s),
-          score:                   moment.score,
-          hook:                    moment.hook,
-          storage_path:            storagePath,
-          thumbnail_url:           thumbnailUrl,
-          caption_style:           project.caption_style || 'hormozi',
-          status:                  'rendered',
-          silences_removed:        isPaid ? silencesRemoved : 0,
-          fillers_removed:         isPaid ? fillersRemoved  : 0,
-          seconds_saved:           isPaid ? secondsSaved    : 0,
-          face_tracking_applied:   faceTrackEnabled,
-          transcript:              clipWords.map(w => ({
-            w: w.word,
-            s: parseFloat((w.start - moment.start_s).toFixed(3)),
-            e: parseFloat((w.end   - moment.start_s).toFixed(3)),
-          })),
-        });
+          const titleSuffix = ratio === primaryRatio ? '' : ` · ${ratio}`;
 
-        successCount++;
-      } catch (clipErr) {
-        console.error(`Erro no clip ${clipId}:`, clipErr);
-      }
+          await supabase.from('clips').insert({
+            id:                    clipId,
+            project_id,
+            user_id,
+            title:                 moment.title + titleSuffix,
+            caption:               moment.caption,
+            hashtags:              moment.hashtags,
+            niche:                 moment.niche,
+            start_s:               moment.start_s,
+            end_s:                 moment.end_s,
+            duration:              Math.round(moment.end_s - moment.start_s),
+            score:                 moment.score,
+            hook:                  moment.hook,
+            storage_path:          storagePath,
+            thumbnail_url:         thumbnailUrl,
+            caption_style:         project.caption_style || 'hormozi',
+            ratio:                 ratio,
+            status:                'rendered',
+            transcript:            transcriptData,
+            silences_removed:      isPaid ? silencesRemoved : 0,
+            fillers_removed:       isPaid ? fillersRemoved  : 0,
+            seconds_saved:         isPaid ? secondsSaved    : 0,
+            face_tracking_applied: isPrimaryRatio ? faceTrackEnabled : false,
+            broll_applied:         brollSuccess,
+          });
+
+          return { clipId, ratio };
+        })
+      );
+
+      const successThisRound = renderResults.filter(r => r.status === 'fulfilled').length;
+      if (successThisRound > 0) successCount += successThisRound;
+
+      renderResults.forEach((result: any, i: number) => {
+        if (result.status === 'rejected') {
+          console.error(`Render falhou: momento ${moment.title}, ratio ${allRatios[i]}:`, result.reason);
+        }
+      });
     }
 
     if (successCount === 0) throw new Error('Nenhum corte renderizado com sucesso');
@@ -987,6 +1631,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
       silence_removal_applied: isPaid && silencesRemoved > 0,
       filler_removal_applied:  isPaid && fillersRemoved  > 0,
       total_seconds_saved:     isPaid ? secondsSaved : 0,
+      formats_rendered:        formatsCount,
       face_tracking_applied:   faceTrackEnabled,
     }).eq('id', project_id);
 
@@ -1005,8 +1650,10 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
 
     // ── 13. Notificação ───────────────────────────────────────────
     const extras: string[] = [];
-    if (isPaid && secondsSaved > 0) extras.push(`${secondsSaved}s removidos ✂️`);
-    if (faceTrackEnabled)           extras.push('câmera inteligente ativada 🎯');
+    if (isPaid && secondsSaved > 0)   extras.push(`${secondsSaved}s removidos ✂️`);
+    if (faceTrackEnabled)              extras.push('câmera inteligente 🎯');
+    if (brollAppliedCount > 0)         extras.push(`${brollAppliedCount} clips com B-roll 🎥`);
+    if (formatsCount > 1)              extras.push(`${formatsCount} formatos: ${allRatios.join(' + ')}`);
 
     await supabase.from('notifications').insert({
       user_id,
@@ -1022,13 +1669,17 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
 
     return new Response(
       JSON.stringify({
-        success:              true,
-        clips_count:          successCount,
-        credit_cost:          creditCost,
-        silences_removed:     silencesRemoved,
-        fillers_removed:      fillersRemoved,
-        seconds_saved:        secondsSaved,
+        success:          true,
+        clips_count:      successCount,
+        moments_count:    momentsCount,
+        formats_rendered: formatsCount,
+        ratios:           allRatios,
+        credit_cost:      creditCost,
+        silences_removed: silencesRemoved,
+        fillers_removed:  fillersRemoved,
+        seconds_saved:    secondsSaved,
         face_tracking_applied: faceTrackEnabled,
+        broll_applied_count: brollAppliedCount,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
