@@ -32,7 +32,7 @@
 <script type="text/babel" src="ui.jsx"></script>
 <script type="text/babel" src="supa.jsx"></script>
 <script type="text/babel" src="ai.jsx"></script>
-<script type="text/babel" src="landing.jsx"></script>
+<script type="text/babel" src="onboarding.jsx"></script>
 <script type="text/babel" src="auth-screen.jsx"></script>
 <script type="text/babel" src="upgrade-modal.jsx"></script>
 <script type="text/babel" src="screens-main.jsx"></script>
@@ -42,7 +42,7 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
     });
   }
 </script>

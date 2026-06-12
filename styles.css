@@ -645,3 +645,182 @@ input[type=range].rng::-webkit-slider-thumb { -webkit-appearance: none; width: 1
   .auth { grid-template-columns: 1fr; }
   .auth-brand { display: none; }
 }
+
+/* ============================================================
+   MOBILE RESPONSIVO — breakpoint principal 768px
+   ============================================================ */
+@media (max-width: 768px) {
+
+  /* App shell — sidebar vira bottom nav */
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 64px;
+    height: 100dvh;
+  }
+
+  .sidebar {
+    grid-row: 2;
+    width: 100% !important;
+    height: 64px;
+    flex-direction: row;
+    align-items: center;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    padding: 0 8px;
+    gap: 0;
+  }
+
+  .brand,
+  .sidebar-foot,
+  .plan-card,
+  .nav-label,
+  .hide-collapsed { display: none !important; }
+
+  .nav {
+    flex-direction: row;
+    gap: 0;
+    width: 100%;
+    justify-content: space-around;
+    margin-top: 0;
+  }
+
+  .nav-item {
+    flex-direction: column;
+    gap: 3px;
+    font-size: 10px;
+    padding: 8px 6px;
+    flex: 1;
+    justify-content: center;
+    border-radius: 0;
+  }
+
+  .nav-item svg { width: 22px; height: 22px; }
+
+  .nav-item::before { display: none; }
+
+  .nav-item.active {
+    background: transparent;
+    color: var(--accent);
+  }
+
+  .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 20px);
+    font-size: 9px;
+    padding: 1px 5px;
+  }
+
+  /* Main column */
+  .main { grid-row: 1; min-height: 0; }
+
+  /* Topbar simplificada */
+  .topbar { padding: 0 12px; gap: 8px; }
+  .searchbox { display: none; }
+  .crumb { font-size: 13px; }
+  .crumb span:first-child { display: none; }
+
+  /* Scroll area */
+  .scroll { overflow-y: auto; }
+
+  /* Pages */
+  .page { padding: 20px 16px 40px; }
+  .page-wide { max-width: 100%; }
+
+  /* Hero import */
+  .import-field { flex-wrap: wrap; padding: 10px; gap: 8px; }
+  .import-field input { width: 100%; order: -1; }
+
+  /* Stat row — 2x2 */
+  .stat-row { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat .num { font-size: 22px; }
+
+  /* Proj grid — 1 coluna */
+  .proj-grid { grid-template-columns: 1fr; }
+
+  /* Clips grid — 2 colunas */
+  .clips-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* Section head stack */
+  .section-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+
+  /* Editor — tela única com painel deslizante */
+  .editor {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    position: fixed;
+    inset: 0;
+  }
+
+  .ed-main { grid-row: 1; min-height: 0; }
+
+  .ed-panel {
+    grid-row: 2;
+    height: 52vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    position: relative;
+    z-index: 10;
+  }
+
+  /* Drag handle no painel mobile */
+  .ed-panel::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    background: var(--border-strong);
+    border-radius: 99px;
+    margin: 10px auto 0;
+  }
+
+  /* Phone preview menor */
+  .phone { height: min(40vh, 360px); }
+
+  /* Templates grid */
+  .tpl-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* Calendar — simplificado */
+  .cal-cell { min-height: 60px; padding: 4px; }
+  .cal-date { font-size: 11px; }
+  .cal-event { font-size: 9px; padding: 2px 4px; }
+
+  /* Auth — só formulário */
+  .auth { grid-template-columns: 1fr; }
+  .auth-brand { display: none; }
+  .auth-form { padding: 20px 16px; }
+  .auth-card { max-width: 100%; }
+
+  /* AI Drawer */
+  .ai-drawer { width: 100%; border-left: none; border-top: 1px solid var(--border); top: auto; border-radius: 20px 20px 0 0; }
+  .ai-fab { right: 12px; bottom: 76px; }
+
+  /* Upgrade modal */
+  .upgrade-modal-grid { grid-template-columns: 1fr !important; }
+
+  /* Filter bar scroll horizontal */
+  .filter-bar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .filter-bar::-webkit-scrollbar { display: none; }
+
+  /* Opt grid 1 coluna */
+  .opt-grid { grid-template-columns: 1fr; }
+
+  /* Ratio pick scroll */
+  .ratio-pick { gap: 6px; }
+  .ratio-opt { padding: 8px 6px; }
+}
+
+/* Breakpoint menor — 480px */
+@media (max-width: 480px) {
+  .h1 { font-size: 24px; }
+  .clips-grid { grid-template-columns: 1fr; }
+  .tpl-grid { grid-template-columns: 1fr; }
+  .stat-row { grid-template-columns: 1fr 1fr; }
+}
+
+/* Altura dinâmica para PWA instalado */
+@supports (height: 100dvh) {
+  .app { height: 100dvh; }
+  #root { height: 100dvh; }
+}

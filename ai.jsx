@@ -60,11 +60,10 @@ function AIChat({ open, onClose, lang, context }) {
     const next = [...msgs, { role: 'user', text: q }];
     setMsgs(next);
     setBusy(true);
-    const ctx = context?.clip
-      ? `O usuário está editando um corte: "${context.clip.title}" (nicho ${NICHES[context.clip.niche]?.label}, nota de viralização ${context.clip.score}/100).`
-      : 'O usuário está no painel da plataforma de cortes.';
-    const prompt = `Você é o assistente da "Corta.vc", uma plataforma que transforma vídeos longos em cortes virais para redes sociais. Seja prático, direto e animado, como um editor parceiro. ${ctx}
-Responda em ${lang === 'en' ? 'English' : 'português do Brasil'}, em no máximo 90 palavras. Use quebras de linha curtas. Pergunta do usuário: "${q}"`;
+    let systemContext = 'Você é a IA assistente do Corta.vc.';
+    if (context?.clip) systemContext += `\nEstamos editando o clip "${context.clip.title}". Ele foca no nicho de ${NICHES[context.clip.niche]?.label} com nota de viralização ${context.clip.score}/100.`;
+    if (context?.user) systemContext += `\nO usuário está no plano ${context.user.plan} e tem ${context.user.credits} créditos. Ajude-o a otimizar o uso.`;
+    const prompt = `${systemContext}\nSeja prático, direto e animado, como um editor parceiro.\nResponda em ${lang === 'en' ? 'English' : 'português do Brasil'}, em no máximo 90 palavras. Use quebras de linha curtas. Pergunta do usuário: "${q}"`;
     const r = await askClaude(prompt);
     setMsgs(m => [...m, { role: 'bot', text: r || (lang === 'en' ? 'I had trouble reaching the AI just now — try again in a sec.' : 'Tive um problema pra falar com a IA agora — tenta de novo em instantes.') }]);
     setBusy(false);

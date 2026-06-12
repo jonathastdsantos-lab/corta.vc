@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Corta.vc — Transforme vídeos longos em cortes virais com IA</title>
+  <meta name="description" content="A IA analisa seu vídeo, encontra os melhores momentos, gera legendas animadas e agenda nas redes. Feito para criadores brasileiros.">
+  <meta property="og:title" content="Corta.vc — Cortes virais com IA">
+  <meta property="og:description" content="Transforme vídeos longos em cortes virais em minutos.">
+  <meta property="og:image" content="/og-image.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://corta.vc/">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Corta.vc",
+    "applicationCategory": "VideoApplication",
+    "operatingSystem": "Web",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "BRL" },
+    "description": "Plataforma brasileira de criação de cortes virais com IA"
+  }
+  </script>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css">
+  <script src="plans.js"></script>
+
+  <style>
+    /* Estilos específicos da Landing Page */
+    body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); margin: 0; padding: 0; }
+    header { position: sticky; top: 0; background: rgba(22,20,18,0.8); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); z-index: 100; }
+    .nav-container { max-width: 1200px; margin: 0 auto; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .logo { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 20px; text-decoration: none; color: var(--ink); }
+    .logo svg { width: 24px; height: 24px; color: var(--accent); }
+    .nav-links { display: flex; gap: 24px; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-weight: 500; transition: color 0.2s; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-actions { display: flex; gap: 12px; }
+    .btn-outline { border: 1px solid var(--border); background: transparent; color: var(--ink); padding: 8px 16px; border-radius: var(--r-sm); font-weight: 600; text-decoration: none; transition: background 0.2s; }
+    .btn-outline:hover { background: var(--surface-2); }
+    .btn-primary { background: var(--accent); color: #fff; padding: 8px 16px; border-radius: var(--r-sm); font-weight: 600; text-decoration: none; transition: opacity 0.2s; }
+    .btn-primary:hover { opacity: 0.9; }
+    
+    .hero { max-width: 1200px; margin: 80px auto; padding: 0 24px; text-align: center; }
+    .badge { display: inline-block; background: var(--surface-2); border: 1px solid var(--border); padding: 6px 12px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 24px; }
+    .hero h1 { font-family: var(--font-display); font-size: 56px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; margin: 0 auto 24px; max-width: 800px; }
+    .hero p { font-size: 20px; color: var(--muted); max-width: 600px; margin: 0 auto 40px; line-height: 1.5; }
+    .hero-ctas { display: flex; justify-content: center; gap: 16px; margin-bottom: 32px; }
+    .hero-ctas .btn-primary { padding: 14px 32px; font-size: 16px; border-radius: var(--r); }
+    .hero-ctas .btn-secondary { padding: 14px 32px; font-size: 16px; border-radius: var(--r); background: var(--surface-2); color: var(--ink); text-decoration: none; font-weight: 600; }
+    .social-proof { font-size: 14px; color: var(--faint); font-weight: 500; }
+    
+    .hero-visual { margin: 60px auto 0; display: flex; justify-content: center; }
+    /* Phone mockup com legenda pulsando */
+    .hero-phone { width: 240px; height: 426px; border-radius: 32px; background: #0d0c0b; border: 4px solid #2a2723; position: relative; overflow: hidden; box-shadow: 0 24px 48px rgba(0,0,0,0.4); }
+    .hero-caption { position: absolute; bottom: 30%; left: 12px; right: 12px; text-align: center; font-weight: 800; font-size: 20px; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,.6); animation: captionPulse 2s ease-in-out infinite; font-family: var(--font-display); }
+    .hero-caption span { color: #ffe14d; }
+    @keyframes captionPulse { 0%,100%{opacity:.7;transform:scale(.97)} 50%{opacity:1;transform:scale(1)} }
+
+    .logos { padding: 40px 24px; text-align: center; border-bottom: 1px solid var(--border); }
+    .logos-grid { display: flex; justify-content: center; gap: 40px; margin-bottom: 16px; flex-wrap: wrap; color: var(--faint); }
+    .logos-grid svg { width: 32px; height: 32px; fill: currentColor; }
+    
+    .section { max-width: 1200px; margin: 100px auto; padding: 0 24px; }
+    .section-title { font-family: var(--font-display); font-size: 40px; font-weight: 800; text-align: center; margin-bottom: 60px; letter-spacing: -0.02em; }
+    
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+    .step-card { background: var(--surface); border: 1px solid var(--border); padding: 32px; border-radius: var(--r-xl); opacity: 0; transform: translateY(24px); transition: opacity .5s, transform .5s; }
+    .step-card.visible { opacity: 1; transform: none; }
+    .step-card:nth-child(2) { transition-delay: .1s; }
+    .step-card:nth-child(3) { transition-delay: .2s; }
+    .step-icon { width: 48px; height: 48px; background: var(--accent-soft); color: var(--accent); border-radius: var(--r); display: grid; place-items: center; margin-bottom: 24px; }
+    .step-card h3 { font-size: 20px; font-weight: 700; margin: 0 0 12px; }
+    .step-card p { color: var(--muted); margin: 0; line-height: 1.5; }
+
+    .demo-placeholder { aspect-ratio: 16/9; background: var(--surface-2); border-radius: var(--r-xl); border: 1px solid var(--border); display: grid; place-items: center; color: var(--muted); font-size: 18px; font-weight: 600; }
+    
+    .compare-table { width: 100%; border-collapse: collapse; margin-top: 40px; background: var(--surface); border-radius: var(--r-xl); overflow: hidden; border: 1px solid var(--border); }
+    .compare-table th, .compare-table td { padding: 20px; text-align: left; border-bottom: 1px solid var(--border); }
+    .compare-table th { font-weight: 700; color: var(--muted); background: var(--surface-2); }
+    .compare-table .corta-col { background: var(--accent-soft); color: var(--ink); font-weight: 600; width: 30%; }
+    
+    .testimonials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .testi-card { background: var(--surface); border: 1px solid var(--border); padding: 32px; border-radius: var(--r-xl); }
+    .testi-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+    .testi-av { width: 48px; height: 48px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 18px; }
+    .testi-stars { color: #f59e0b; font-size: 18px; letter-spacing: 2px; margin-bottom: 16px; }
+    
+    .pricing-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 40px; }
+    .plan-card { background: var(--surface); border: 1px solid var(--border); padding: 32px; border-radius: var(--r-xl); position: relative; display: flex; flex-direction: column; }
+    .plan-card.pro { border-color: var(--accent); }
+    .plan-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    
+    .faq-item { border-bottom: 1px solid var(--border); }
+    .faq-q { padding: 24px 0; font-size: 18px; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+    .faq-a { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; color: var(--muted); line-height: 1.6; }
+    .faq-item.open .faq-a { max-height: 200px; padding-bottom: 24px; }
+    
+    footer { border-top: 1px solid var(--border); padding: 60px 24px 40px; text-align: center; color: var(--muted); }
+    
+    /* Hamburger Menu */
+    .mobile-menu-btn { display: none; background: none; border: none; color: var(--ink); cursor: pointer; }
+    .mobile-menu { display: none; }
+    
+    @media (max-width: 768px) {
+      .nav-links, .nav-actions { display: none; }
+      .mobile-menu-btn { display: block; }
+      .hero h1 { font-size: 40px; }
+      .steps, .testimonials, .pricing-grid { grid-template-columns: 1fr; }
+      .compare-table { display: block; overflow-x: auto; }
+      .nav-container.open .mobile-menu { display: flex; flex-direction: column; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg); padding: 24px; border-bottom: 1px solid var(--border); gap: 16px; }
+      .nav-container.open .mobile-menu a { color: var(--ink); text-decoration: none; font-size: 18px; font-weight: 500; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="nav-container" id="nav-container">
+      <a href="/" class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm0 7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM8 8l12 8M8 16 20 8M14 12l6-4"/></svg>
+        Corta.vc
+      </a>
+      <nav class="nav-links">
+        <a href="#como-funciona">Como funciona</a>
+        <a href="#precos">Preços</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="nav-actions">
+        <a href="index.html" class="btn-outline">Entrar</a>
+        <a href="index.html" class="btn-primary">Começar grátis</a>
+      </div>
+      <button class="mobile-menu-btn" onclick="document.getElementById('nav-container').classList.toggle('open')">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+      <div class="mobile-menu">
+        <a href="#como-funciona">Como funciona</a>
+        <a href="#precos">Preços</a>
+        <a href="#faq">FAQ</a>
+        <a href="index.html">Entrar</a>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="badge">🇧🇷 Feito para criadores brasileiros</div>
+    <h1>Seus vídeos longos viram cortes virais em minutos</h1>
+    <p>A IA analisa, corta, legenda e agenda nas suas redes sociais — você só aprova.</p>
+    <div class="hero-ctas">
+      <a href="index.html" class="btn-primary">Começar grátis — sem cartão</a>
+      <a href="#demo" class="btn-secondary">Ver demonstração</a>
+    </div>
+    <div class="social-proof">Já usado por +2.400 criadores brasileiros</div>
+    
+    <div class="hero-visual">
+      <div class="hero-phone">
+        <div class="hero-caption">ISSO É UM <span>CORTE VIRAL</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="logos">
+    <div class="logos-grid">
+      <!-- Ícones simples das redes -->
+      <svg viewBox="0 0 24 24"><path d="M9 12a4 4 0 1 0 4 4V4h3.5c.8 3 3.5 5.5 6.5 6v3h-3.5a6.5 6.5 0 0 1-5.5-2.5v7a8 8 0 1 1-14-8 8 8 0 0 1 9-8Z"/></svg>
+      <svg viewBox="0 0 24 24"><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
+      <svg viewBox="0 0 24 24"><path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/></svg>
+      <svg viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect width="4" height="12" x="2" y="9"/><circle cx="4" cy="4" r="2"/></svg>
+    </div>
+    <div style="color: var(--faint); font-size: 14px;">Publique em todas as redes com 1 clique</div>
+  </div>
+
+  <section id="como-funciona" class="section">
+    <h2 class="section-title">Como funciona</h2>
+    <div class="steps">
+      <div class="step-card">
+        <div class="step-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></div>
+        <h3>Cole o link ou suba o vídeo</h3>
+        <p>YouTube, Drive, Twitch, Zoom ou MP4</p>
+      </div>
+      <div class="step-card">
+        <div class="step-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg></div>
+        <h3>A IA escolhe os melhores momentos</h3>
+        <p>Transcreve, pontua e corta automaticamente</p>
+      </div>
+      <div class="step-card">
+        <div class="step-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></div>
+        <h3>Baixe ou agende nas redes</h3>
+        <p>Com legenda no estilo que você quiser</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="demo" class="section">
+    <h2 class="section-title">Veja em ação</h2>
+    <div class="demo-placeholder">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 16px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Vídeo de demonstração em breve
+    </div>
+    
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th class="corta-col">Corta.vc</th>
+          <th>Concorrentes internacionais</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Preço em R$</td>
+          <td class="corta-col">✓</td>
+          <td>✗ (só USD)</td>
+        </tr>
+        <tr>
+          <td>PIX disponível</td>
+          <td class="corta-col">✓</td>
+          <td>✗</td>
+        </tr>
+        <tr>
+          <td>Templates BR (fé, etc.)</td>
+          <td class="corta-col">✓</td>
+          <td>✗</td>
+        </tr>
+        <tr>
+          <td>Legendas em PT-BR</td>
+          <td class="corta-col">✓</td>
+          <td>Parcial</td>
+        </tr>
+        <tr>
+          <td>Suporte em português</td>
+          <td class="corta-col">✓</td>
+          <td>✗</td>
+        </tr>
+        <tr>
+          <td>Interface em português</td>
+          <td class="corta-col">✓</td>
+          <td>✗</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <div class="testimonials">
+      <div class="testi-card">
+        <div class="testi-head">
+          <div class="testi-av">LC</div>
+          <div>
+            <div style="font-weight: 700">Leandro Castro</div>
+            <div style="font-size: 13px; color: var(--muted)">Pastor e Youtuber · SP</div>
+          </div>
+        </div>
+        <div class="testi-stars">★★★★★</div>
+        <p>"Economizo 4 horas por semana. O que eu fazia manualmente em dias, o Corta.vc faz em minutos."</p>
+      </div>
+      <div class="testi-card">
+        <div class="testi-head">
+          <div class="testi-av" style="background: #10b981">MC</div>
+          <div>
+            <div style="font-weight: 700">Mariana Costa</div>
+            <div style="font-size: 13px; color: var(--muted)">Host de Podcast · RJ</div>
+          </div>
+        </div>
+        <div class="testi-stars">★★★★★</div>
+        <p>"Os ganchos que a IA cria são perfeitos. Meus Shorts dobraram de visualização no primeiro mês."</p>
+      </div>
+      <div class="testi-card">
+        <div class="testi-head">
+          <div class="testi-av" style="background: #3b82f6">PA</div>
+          <div>
+            <div style="font-weight: 700">Pedro Alves</div>
+            <div style="font-size: 13px; color: var(--muted)">Streamer · MG</div>
+          </div>
+        </div>
+        <div class="testi-stars">★★★★★</div>
+        <p>"Finalmente uma ferramenta focada em nós. Pagar em real via PIX faz toda a diferença."</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="precos" class="section">
+    <h2 class="section-title">Planos para todos os tamanhos</h2>
+    <div style="text-align: center; margin-bottom: 24px;">
+      <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+        <span id="label-monthly" style="font-weight: 600">Mensal</span>
+        <div style="width: 44px; height: 24px; background: var(--surface-3); border-radius: 99px; position: relative;" id="billing-toggle" onclick="toggleBilling()">
+          <div style="width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 2px; left: 2px; transition: transform 0.2s;" id="billing-knob"></div>
+        </div>
+        <span id="label-yearly" style="color: var(--muted)">Anual (-20%)</span>
+      </label>
+    </div>
+    
+    <div class="pricing-grid" id="pricing-grid"></div>
+  </section>
+
+  <section id="faq" class="section">
+    <h2 class="section-title">Perguntas Frequentes</h2>
+    <div style="max-width: 800px; margin: 0 auto;">
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">O Corta.vc funciona com qualquer tipo de vídeo? <span>+</span></div>
+        <div class="faq-a">Sim, podcast, lives, aulas, pregações, gameplay... a IA é treinada para detectar momentos de fala interessantes em qualquer contexto.</div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Preciso instalar algum programa? <span>+</span></div>
+        <div class="faq-a">Não, o processamento e a edição são feitos 100% no seu navegador. Você pode usar do PC ou até do celular.</div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Como funciona o limite de créditos? <span>+</span></div>
+        <div class="faq-a">Cada vídeo processado consome créditos conforme a duração. Exemplo: um podcast de 60 minutos consome 60 créditos. Os créditos resetam todo mês.</div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Posso cancelar quando quiser? <span>+</span></div>
+        <div class="faq-a">Sim, sem fidelidade. Cancele a qualquer momento no seu painel.</div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Os meus vídeos ficam armazenados? <span>+</span></div>
+        <div class="faq-a">Sim, ficam no seu perfil por 30 dias para você refazer cortes se precisar. Depois são excluídos automaticamente para proteger sua privacidade.</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 800; font-size: 20px; color: var(--ink); margin-bottom: 16px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm0 7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM8 8l12 8M8 16 20 8M14 12l6-4"/></svg>
+      Corta.vc
+    </div>
+    <div style="margin-bottom: 24px;">Transforme vídeos longos em cortes virais</div>
+    <div style="display: flex; justify-content: center; gap: 24px; margin-bottom: 32px; font-size: 14px;">
+      <a href="#" style="color: var(--muted); text-decoration: none;">Termos de Uso</a>
+      <a href="#" style="color: var(--muted); text-decoration: none;">Privacidade</a>
+      <a href="#" style="color: var(--muted); text-decoration: none;">Contato</a>
+      <a href="#" style="color: var(--muted); text-decoration: none;">Blog</a>
+    </div>
+    <div style="font-size: 13px;">© 2026 Corta.vc — Produto brasileiro 🇧🇷</div>
+  </footer>
+
+  <script>
+    // Animação de rolagem dos cards Como Funciona
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+    }, { threshold: 0.15 });
+    document.querySelectorAll('.step-card').forEach(el => observer.observe(el));
+
+    // Pricing dinâmico
+    let isYearly = false;
+    
+    function toggleBilling() {
+      isYearly = !isYearly;
+      document.getElementById('billing-knob').style.transform = isYearly ? 'translateX(20px)' : 'translateX(0)';
+      document.getElementById('label-yearly').style.color = isYearly ? 'var(--ink)' : 'var(--muted)';
+      document.getElementById('label-yearly').style.fontWeight = isYearly ? '600' : 'normal';
+      document.getElementById('label-monthly').style.color = !isYearly ? 'var(--ink)' : 'var(--muted)';
+      document.getElementById('label-monthly').style.fontWeight = !isYearly ? '600' : 'normal';
+      renderPlans();
+    }
+
+    function renderPlans() {
+      const grid = document.getElementById('pricing-grid');
+      grid.innerHTML = '';
+      
+      const plans = window.CORTA_PLANS || [];
+      plans.forEach(plan => {
+        const p = isYearly ? plan.price_year / 12 : plan.price_month;
+        const pStr = plan.id === 'free' ? 'Grátis' : 'R$ ' + p.toFixed(2).replace('.', ',');
+        const isPro = plan.id === 'pro';
+        
+        grid.innerHTML += `
+          <div class="plan-card ${isPro ? 'pro' : ''}">
+            ${isPro ? '<div class="plan-badge">Mais popular</div>' : ''}
+            <h3 style="margin: 0 0 8px; font-size: 20px;">${plan.name}</h3>
+            <div style="font-family: var(--font-display); font-weight: 800; font-size: 32px; margin-bottom: 24px;">
+              ${pStr} ${plan.id !== 'free' ? '<span style="font-size: 14px; font-weight: 500; color: var(--muted)">/mês</span>' : ''}
+            </div>
+            <div style="font-size: 14px; color: var(--muted); margin-bottom: 32px;">
+              ${plan.credits} min/mês<br>
+              ${plan.max_len} min/vídeo
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0 0 32px; font-size: 14px; flex: 1;">
+              <li style="margin-bottom: 12px">✓ Processamento IA</li>
+              <li style="margin-bottom: 12px">✓ Marcas d'água removidas (Pago)</li>
+            </ul>
+            <a href="index.html" class="${plan.id === 'free' ? 'btn-outline' : 'btn-primary'}" style="text-align: center; display: block;">
+              ${plan.id === 'free' ? 'Começar grátis' : 'Assinar ' + plan.name}
+            </a>
+          </div>
+        `;
+      });
+    }
+    
+    // Espera os planos carregarem do plans.js e renderiza
+    setTimeout(renderPlans, 100);
+  </script>
+</body>
+</html>

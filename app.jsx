@@ -19,6 +19,70 @@ const NAV = [
   { id: 'analytics', icon: 'chart', key: 'nav_analytics' },
 ];
 
+function NotifDropdown({ notifications, onClose, onRead, lang }) {
+  const en = lang === 'en';
+  const unread = notifications.filter(n => !n.read).length;
+
+  const typeIcon = { processing_done: 'scissors', post_published: 'send', credits_low: 'zap', new_feature: 'sparkles', welcome: 'star' };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="btn-icon bordered" onClick={onClose} style={{ position: 'relative' }}>
+        <Icon name="bell" size={18} />
+        {unread > 0 && (
+          <span style={{ position: 'absolute', top: 4, right: 4, width: 8, height: 8,
+            borderRadius: 99, background: 'var(--accent)', border: '2px solid var(--surface)' }} />
+        )}
+      </button>
+      {unread >= 0 && notifications && (
+        <div className="card fade-up" style={{
+          position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 320,
+          zIndex: 100, boxShadow: 'var(--shadow-pop)', overflow: 'hidden'
+        }}>
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>
+              {en ? 'Notifications' : 'Notificações'}
+              {unread > 0 && <span className="nav-badge" style={{ marginLeft: 8 }}>{unread}</span>}
+            </span>
+            {unread > 0 && (
+              <button style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
+                onClick={() => notifications.forEach(n => !n.read && onRead(n.id))}>
+                {en ? 'Mark all read' : 'Marcar lidas'}
+              </button>
+            )}
+          </div>
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            {notifications.length === 0 ? (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                {en ? 'No notifications yet' : 'Nenhuma notificação ainda'}
+              </div>
+            ) : notifications.slice(0, 10).map(n => (
+              <div key={n.id} onClick={() => onRead(n.id)}
+                style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)',
+                  background: n.read ? 'transparent' : 'var(--accent-soft)', cursor: 'pointer',
+                  display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--surface-3)',
+                  display: 'grid', placeItems: 'center', flex: 'none' }}>
+                  <Icon name={typeIcon[n.type] || 'bell'} size={14} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: n.read ? 500 : 700, lineHeight: 1.3 }}>{n.title}</div>
+                  {n.body && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{n.body}</div>}
+                  <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+                    {new Date(n.created_at).toLocaleDateString('pt-BR')}
+                  </div>
+                </div>
+                {!n.read && <div style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--accent)', flex: 'none', marginTop: 4 }} />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const lang = t.lang === 'en' ? 'en' : 'pt';
@@ -37,6 +101,12 @@ function App() {
   const [showLanding, setShowLanding] = useState(true);
   const [showNotif, setShowNotif] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  async function markNotifRead(id) {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    if (Supa.client) await Supa.client.from('notifications').update({ read: true }).eq('id', id);
+  }
 
   // persiste lang
   useEffect(() => {
@@ -70,7 +140,28 @@ function App() {
   // checa sessão ao montar
   useEffect(() => {
     let alive = true;
-    Supa.getUser().then(u => { if (alive) { setUser(u); setAuthReady(true); } });
+    Supa.getUser().then(u => { 
+      if (alive) { 
+        setUser(u); 
+        setAuthReady(true); 
+        
+        if (u && !u.onboarding_done) setShowOnboarding(true);
+
+        if (u && Supa.client) {
+          Supa.client.from('notifications')
+            .select('*').eq('user_id', u.id)
+            .order('created_at', { ascending: false }).limit(20)
+            .then(({ data }) => setNotifications(data || []));
+
+          Supa.client.channel(`notif-${u.id}`)
+            .on('postgres_changes', {
+              event: 'INSERT', schema: 'public', table: 'notifications',
+              filter: `user_id=eq.${u.id}`
+            }, payload => setNotifications(prev => [payload.new, ...prev]))
+            .subscribe();
+        }
+      } 
+    });
     
     let authSub = null;
     if (Supa.client) {
@@ -194,6 +285,13 @@ function App() {
                 <Icon name="search" size={16} /><input placeholder={T.search} />
               </div>
               <IconBtn name="globe" bordered onClick={() => setTweak('lang', lang === 'en' ? 'pt' : 'en')} title="PT / EN" />
+              
+              <div style={{ position: 'relative' }} onMouseLeave={() => setShowNotif(false)}>
+                <div onMouseEnter={() => setShowNotif(true)}>
+                  <NotifDropdown notifications={notifications} onClose={() => setShowNotif(!showNotif)} onRead={markNotifRead} lang={lang} />
+                </div>
+              </div>
+
               <Btn variant="ghost" icon="sparkles" onClick={() => setAiOpen(true)}>{T.ask_ai}</Btn>
             </div>
 
@@ -221,7 +319,7 @@ function App() {
           <span className="spark"><Icon name="sparkles" size={15} /></span>{T.ai_assistant}
         </button>
       )}
-      <AIChat open={aiOpen} onClose={() => setAiOpen(false)} lang={lang} context={{ clip: route === 'editor' ? clip : null }} />
+      <AIChat open={aiOpen} onClose={() => setAiOpen(false)} lang={lang} context={{ clip: route === 'editor' ? clip : null, user }} />
 
       {/* TWEAKS */}
       <TweaksPanel title="Tweaks">
@@ -258,6 +356,17 @@ function App() {
           currentPlan={user?.plan} 
           user={user} 
           onClose={() => setShowUpgrade(false)} 
+        />
+      )}
+
+      {showOnboarding && user && window.OnboardingWizard && (
+        <window.OnboardingWizard
+          lang={lang}
+          user={user}
+          onComplete={() => {
+            setShowOnboarding(false);
+            Supa.getUser().then(u => setUser(u));
+          }}
         />
       )}
     </React.Fragment>

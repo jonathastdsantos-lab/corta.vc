@@ -2,6 +2,37 @@
    SCREENS — Templates · Schedule
    ============================================================ */
 
+function CommunityTemplates({ lang }) {
+  const en = lang === 'en';
+  return (
+    <div className="tpl-grid stagger">
+      {[
+        { name: 'Podcast Primo', author: '@thiagonigro', uses: '12k', style: 'hormozi' },
+        { name: 'Gameplay Rápida', author: '@alanzoka', uses: '8.5k', style: 'netflix' },
+        { name: 'Pregação Emocionante', author: '@deiveleonardo', uses: '15k', style: 'dev' },
+      ].map((t, i) => (
+        <div key={i} className="tpl-card">
+          <div className="tpl-preview" style={{ background: 'var(--surface-3)', aspectRatio: '16/11' }}>
+            <div style={{ position: 'relative', zIndex: 2, padding: '0 14px', textAlign: 'center' }}>
+              <CaptionText text={en ? 'Community' : 'Comunidade'} style={CAPTION_STYLES.find(s=>s.id===t.style)} fontSize={20} />
+            </div>
+          </div>
+          <div className="body">
+            <div>
+              <div className="tname">{t.name}</div>
+              <div className="tmeta" style={{ display: 'flex', gap: 6 }}>
+                <span>{t.author}</span>
+                <span style={{ color: 'var(--accent)' }}>• {t.uses} {en ? 'uses' : 'usos'}</span>
+              </div>
+            </div>
+            <Btn variant="ghost" size="sm">{en ? 'Use' : 'Usar'}</Btn>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TemplatesScreen({ lang, openClip }) {
   const T = STR[lang];
   const [tab, setTab] = useState('captions');
@@ -10,6 +41,7 @@ function TemplatesScreen({ lang, openClip }) {
     { id: 'layouts', label: T.tab_layouts, icon: 'crop' },
     { id: 'niches', label: T.tab_niches, icon: 'grid' },
     { id: 'formats', label: T.tab_formats, icon: 'ratio' },
+    { id: 'community', label: lang === 'en' ? 'Community' : 'Comunidade', icon: 'users' },
   ];
   const demoText = lang === 'en' ? 'this is {viral}' : 'isso é {viral}';
 
@@ -90,6 +122,8 @@ function TemplatesScreen({ lang, openClip }) {
           ))}
         </div>
       )}
+
+      {tab === 'community' && <CommunityTemplates lang={lang} />}
 
       {tab === 'formats' && (
         <div className="proj-grid stagger" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>

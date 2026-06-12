@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Meta tags dinâmicas (preenchidas via JS) -->
+  <title>Corta.vc — Preview</title>
+  <meta name="description" content="Corte de vídeo criado com Corta.vc">
+  <meta property="og:title" content="">
+  <meta property="og:image" content="">
+  <meta property="og:video" content="">
+  <meta property="og:type" content="video.other">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
+</head>
+<body style="display:grid; place-items:center; min-height:100vh; background:var(--bg); padding:20px;">
+  <div id="preview-root" style="width:100%; max-width:400px; text-align:center;">
+    <div id="loading" style="color:var(--muted); font-family:var(--font-ui);">Carregando...</div>
+    <div id="error" style="display:none; color:var(--hot); font-family:var(--font-ui);">Link expirado ou inválido.</div>
+    <div id="content" style="display:none;">
+      <!-- Logo -->
+      <div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:24px;">
+        <div style="width:30px;height:30px;border-radius:9px;background:var(--ink);color:var(--surface);display:grid;place-items:center;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm0 7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM8 8l12 8M8 16 20 8M14 12l6-4"/></svg>
+        </div>
+        <span style="font-family:var(--font-ui);font-weight:800;font-size:18px;">Corta<b style="color:var(--accent)">.vc</b></span>
+      </div>
+
+      <!-- Player -->
+      <div class="card" style="border-radius:var(--r-xl);overflow:hidden;margin-bottom:16px;">
+        <video id="clip-video" controls playsinline style="width:100%;display:block;background:#000;max-height:70vh;object-fit:contain;"></video>
+      </div>
+
+      <!-- Info -->
+      <h1 id="clip-title" style="font-family:var(--font-ui);font-size:18px;font-weight:700;margin:0 0 8px;"></h1>
+      <p id="clip-caption" style="font-family:var(--font-ui);font-size:14px;color:var(--muted);margin:0 0 20px;"></p>
+
+      <!-- CTA -->
+      <a href="index.html" style="display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 20px;
+        border-radius:var(--r-sm);background:var(--accent);color:#fff;font-family:var(--font-ui);
+        font-weight:600;font-size:14px;text-decoration:none;">
+        ✂️ Criar meus próprios cortes — grátis
+      </a>
+      <div id="expires-info" style="font-family:var(--font-mono);font-size:11px;color:var(--faint);margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <script>
+    (async () => {
+      const token = new URLSearchParams(location.search).get('t');
+      if (!token) { showError(); return; }
+
+      const CFG = window.CORTA_CONFIG || {};
+      if (!CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY) { showError(); return; }
+
+      const sb = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+
+      const { data: share } = await sb.from('shared_clips')
+        .select('*, clips(title, caption, storage_path, thumbnail_url)')
+        .eq('token', token).gt('expires_at', new Date().toISOString()).single();
+
+      if (!share) { showError(); return; }
+
+      // Incrementa views
+      await sb.from('shared_clips').update({ views: (share.views || 0) + 1 }).eq('token', token);
+
+      const clip = share.clips;
+
+      // URL do vídeo
+      const { data: { publicUrl } } = sb.storage.from('clips').getPublicUrl(clip.storage_path || '');
+
+      // Preenche meta tags dinâmicas
+      document.title = `${clip.title} — Corta.vc`;
+      document.querySelector('meta[property="og:title"]').content = clip.title;
+      document.querySelector('meta[property="og:image"]').content = clip.thumbnail_url || '';
+      document.querySelector('meta[property="og:video"]').content = publicUrl;
+
+      // Preenche UI
+      document.getElementById('clip-video').src = publicUrl;
+      document.getElementById('clip-title').textContent = clip.title;
+      document.getElementById('clip-caption').textContent = (clip.caption || '').replace(/\{|\}/g, '');
+
+      const exp = new Date(share.expires_at);
+      document.getElementById('expires-info').textContent =
+        `Link expira em ${exp.toLocaleDateString('pt-BR')} às ${exp.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}`;
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'block';
+    })();
+
+    function showError() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'block';
+    }
+  </script>
+</body>
+</html>
