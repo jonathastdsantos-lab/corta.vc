@@ -76,22 +76,14 @@ function Dashboard({ lang, go, openAI, user }) {
 
       {/* Stats */}
       <div className="stat-row stagger" style={{ marginBottom: 30 }}>
-        {userStats ? [
-          { key: 'clips', label: { pt: 'Cortes criados', en: 'Clips made' },
-            num: String(userStats.clips), delta: '', dir: 'up', icon: 'scissors' },
-          { key: 'posted', label: { pt: 'Publicados', en: 'Published' },
-            num: String(userStats.posted), delta: '', dir: 'up', icon: 'send' },
-          { key: 'credits', label: { pt: 'Créditos restantes', en: 'Credits left' },
-            num: String(user?.credits || 0), delta: '', dir: user?.credits > 5 ? 'up' : 'down', icon: 'zap' },
-        ].map(s => (
+        {(userStats ? [
+          { key: 'clips',   label: { pt: 'Cortes criados',    en: 'Clips made'     }, num: String(userStats.clips),  delta: '', dir: 'up',   icon: 'scissors' },
+          { key: 'posted',  label: { pt: 'Publicados',         en: 'Published'      }, num: String(userStats.posted), delta: '', dir: 'up',   icon: 'send'     },
+          { key: 'credits', label: { pt: 'Créditos restantes', en: 'Credits left'   }, num: user?.credits === -1 ? '∞' : String(user?.credits || 0), delta: '', dir: (user?.credits === -1 || user?.credits > 5) ? 'up' : 'down', icon: 'zap' },
+          { key: 'time',    label: { pt: 'Horas economizadas', en: 'Hours saved'    }, num: `${Math.round((userStats.clips * 0.8))}h`, delta: '', dir: 'up', icon: 'clock' },
+        ] : STATS).map(s => (
           <div key={s.key} className="stat">
-            <div className="label"><Icon name={s.icon} size={15} />{s.label[lang]}</div>
-            <div className="num">{s.num}</div>
-            {s.delta && <div className={`delta ${s.dir}`}>{s.dir === 'up' ? '↑' : '↓'} {s.delta}</div>}
-          </div>
-        )) : STATS.slice(0,3).map(s => (
-          <div key={s.key} className="stat">
-            <div className="label"><Icon name={s.icon} size={15} />{s.label[lang]}</div>
+            <div className="label"><Icon name={s.icon} size={15} />{s.label[lang] || (typeof s.label === 'string' ? s.label : '')}</div>
             <div className="num">{s.num}</div>
             {s.delta && <div className={`delta ${s.dir}`}>{s.dir === 'up' ? '↑' : '↓'} {s.delta}</div>}
           </div>
@@ -199,7 +191,8 @@ function ImportScreen({ lang, go, user }) {
         title: file.name,
         source_type: 'upload',
         storage_path: res.path,
-        status: 'processing'
+        status: 'processing',
+        lang: clipLang
       });
     }
 
@@ -220,7 +213,8 @@ function ImportScreen({ lang, go, user }) {
           : linkValue.includes('drive') ? 'drive'
           : linkValue.includes('twitch') ? 'twitch' : 'link',
         source_url: linkValue.trim(),
-        status: 'processing'
+        status: 'processing',
+        lang: clipLang
       }).select().single();
       
       if (!error && proj) {
@@ -448,7 +442,7 @@ function ClipsScreen({ lang, go, project, openClip }) {
 
   async function dl(clip, e) {
     e.stopPropagation();
-    if (!Supa.client) { window.showToast('Funcionalidade indisponível no modo demo', 'info'); return; }
+    if (!Supa.client) { window.showToast('Funcionalidade indisponível no modo demo', { type: 'info' }); return; }
     try {
       e.target.innerText = '...';
       const { data } = await Supa.client.storage.from('clips').download(clip.storage_path);
@@ -458,8 +452,8 @@ function ClipsScreen({ lang, go, project, openClip }) {
       a.download = `corta-vc-${clip.title.replace(/\W+/g, '-')}.mp4`;
       a.click();
       e.target.innerText = lang === 'en' ? 'Download' : 'Baixar';
-      window.showToast('Download concluído', 'success');
-    } catch(err) { window.showToast('Erro ao baixar vídeo', 'error'); }
+      window.showToast('Download concluído ✓', { type: 'success' });
+    } catch(err) { window.showToast('Erro ao baixar vídeo', { type: 'error' }); }
   }
 
   return (
@@ -557,21 +551,129 @@ function ClipsScreen({ lang, go, project, openClip }) {
       </div>
       
       {selected.size > 0 && (
-        <div className="bulk-bar fade-up">
-          <span className="bulk-count">{selected.size} selecionado{selected.size > 1 ? 's' : ''}</span>
+        <div className="bulk-bar fade-up" role="toolbar" aria-label={lang === 'en' ? 'Batch actions' : 'Ações em lote'}>
+          <span className="bulk-count">
+            {selected.size} {selected.size === 1
+              ? (lang === 'en' ? 'selected' : 'selecionado')
+              : (lang === 'en' ? 'selected' : 'selecionados')}
+          </span>
           <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,.2)', margin: '0 4px' }} />
           <div className="bulk-actions">
-            <Btn size="sm" icon="send" onClick={() => window.showToast(`${selected.size} cortes enviados p/ agenda`, 'success')}>Agendar</Btn>
-            <Btn size="sm" icon="download" onClick={() => window.showToast(`Baixando ${selected.size} cortes`, 'success')}>Baixar</Btn>
-            <Btn size="sm" icon="trash" onClick={() => {
-              if (confirm('Excluir selecionados?')) {
+      
+            {/* Agendar em lote — abre agenda com clips pré-selecionados */}
+            <Btn size="sm" icon="calendar"
+              onClick={() => {
+                // Salva seleção no sessionStorage para a agenda acessar
+                sessionStorage.setItem('bulk_schedule_ids', JSON.stringify([...selected]));
+                go('schedule');
+                clearSelection();
+                window.showToast(
+                  lang === 'en'
+                    ? `${selected.size} clips ready to schedule`
+                    : `${selected.size} corte${selected.size > 1 ? 's' : ''} prontos para agendar`,
+                  { type: 'info' }
+                );
+              }}>
+              {lang === 'en' ? 'Schedule' : 'Agendar'}
+            </Btn>
+      
+            {/* Download em lote — real */}
+            <Btn size="sm" icon="download" disabled={bulkLoading}
+              onClick={async () => {
+                if (!Supa.client) {
+                  window.showToast(lang === 'en' ? 'Demo mode — download unavailable' : 'Modo demo — download indisponível', { type: 'info' });
+                  return;
+                }
+                setBulkLoading(true);
+                const toDownload = filtered.filter(c => selected.has(c.id) && c.storage_path);
+                let done = 0;
+                for (const c of toDownload) {
+                  try {
+                    const { data, error } = await Supa.client.storage.from('clips').download(c.storage_path);
+                    if (error) throw error;
+                    const url = URL.createObjectURL(data);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `corta-vc-${c.title.replace(/\W+/g, '-').toLowerCase()}.mp4`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    done++;
+                    // Pausa entre downloads para não sobrecarregar o browser
+                    await new Promise(r => setTimeout(r, 600));
+                  } catch (err) {
+                    console.error('Falha no download de', c.title, err);
+                  }
+                }
+                setBulkLoading(false);
+                clearSelection();
+                window.showToast(
+                  lang === 'en'
+                    ? `${done} clip${done !== 1 ? 's' : ''} downloaded`
+                    : `${done} corte${done !== 1 ? 's' : ''} baixado${done !== 1 ? 's' : ''}`,
+                  { type: done > 0 ? 'success' : 'error' }
+                );
+              }}>
+              {bulkLoading ? '…' : (lang === 'en' ? 'Download' : 'Baixar')}
+            </Btn>
+      
+            {/* Excluir em lote com undo real */}
+            <Btn size="sm" icon="trash"
+              style={{ color: '#f87171' }}
+              onClick={async () => {
+                if (!confirm(lang === 'en'
+                  ? `Delete ${selected.size} clip${selected.size > 1 ? 's' : ''}? This cannot be undone.`
+                  : `Excluir ${selected.size} corte${selected.size > 1 ? 's' : ''}? Esta ação não pode ser desfeita.`
+                )) return;
+      
+                const deletedClips = filtered.filter(c => selected.has(c.id));
+                const deletedIds = [...selected];
+      
+                // Remove do estado imediatamente (otimista)
                 setClips(prev => prev.filter(c => !selected.has(c.id)));
                 clearSelection();
-                window.showToast('Cortes excluídos', 'success', () => alert('Desfeito!'));
-              }
-            }}>Excluir</Btn>
+      
+                // Persiste no banco
+                if (Supa.client) {
+                  const { error } = await Supa.client.from('clips').delete().in('id', deletedIds);
+                  if (error) {
+                    // Reverte se falhar
+                    setClips(prev => [...prev, ...deletedClips]);
+                    window.showToast(lang === 'en' ? 'Delete failed' : 'Falha ao excluir', { type: 'error' });
+                    return;
+                  }
+                }
+      
+                window.showToast(
+                  lang === 'en'
+                    ? `${deletedClips.length} clip${deletedClips.length > 1 ? 's' : ''} deleted`
+                    : `${deletedClips.length} corte${deletedClips.length > 1 ? 's' : ''} excluído${deletedClips.length > 1 ? 's' : ''}`,
+                  {
+                    type: 'success',
+                    undo: async () => {
+                      // Reinsere no banco (se ainda tiver os dados)
+                      if (Supa.client) {
+                        const toRestore = deletedClips.map(c => ({ ...c }));
+                        await Supa.client.from('clips').upsert(toRestore);
+                      }
+                      setClips(prev => {
+                        const ids = new Set(prev.map(c => c.id));
+                        return [...prev, ...deletedClips.filter(c => !ids.has(c.id))];
+                      });
+                      window.showToast(lang === 'en' ? 'Restored ✓' : 'Restaurado ✓', { type: 'success', duration: 2000 });
+                    }
+                  }
+                );
+              }}>
+              {lang === 'en' ? 'Delete' : 'Excluir'}
+            </Btn>
           </div>
-          <button className="bulk-close" onClick={clearSelection}><Icon name="close" size={16} /></button>
+      
+          <button className="bulk-close" onClick={clearSelection}
+            aria-label={lang === 'en' ? 'Clear selection' : 'Limpar seleção'}>
+            <Icon name="x" size={16} />
+          </button>
         </div>
       )}
 

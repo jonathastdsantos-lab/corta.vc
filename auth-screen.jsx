@@ -168,10 +168,30 @@ function AuthScreen({ lang, onAuth }) {
           {!resetMode && (
             <React.Fragment>
               <div className="auth-div">{en ? 'OR' : 'OU'}</div>
-              <button className="auth-oauth" onClick={demo}>
-                <span style={{ width: 18, height: 18, borderRadius: 99, background: 'conic-gradient(#ea4335,#fbbc05,#34a853,#4285f4,#ea4335)', flex: 'none' }} />
-                {Supa.mode === 'live' ? (en ? 'Continue with Google' : 'Continuar com Google') : (en ? 'Enter demo mode' : 'Entrar em modo demonstração')}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <button className="auth-oauth" onClick={() => Supa.signInWithProvider('google')}>
+                  <span style={{ width: 18, height: 18, borderRadius: 99, background: 'conic-gradient(#ea4335,#fbbc05,#34a853,#4285f4,#ea4335)', flex: 'none' }} />
+                  {en ? 'Continue with Google' : 'Continuar com Google'}
+                </button>
+                <button className="auth-oauth" onClick={() => Supa.signInWithProvider('apple')}>
+                  <Icon name="apple" size={18} />
+                  {en ? 'Continue with Apple' : 'Continuar com Apple'}
+                </button>
+                <button className="auth-oauth" onClick={() => Supa.signInWithProvider('discord')}>
+                  <Icon name="gamepad" size={18} style={{ color: '#5865F2' }} />
+                  {en ? 'Continue with Discord' : 'Continuar com Discord'}
+                </button>
+                <button className="auth-oauth" onClick={() => Supa.signInWithProvider('github')}>
+                  <Icon name="github" size={18} />
+                  {en ? 'Continue with GitHub' : 'Continuar com GitHub'}
+                </button>
+                {Supa.mode === 'demo' && (
+                  <button className="auth-oauth" onClick={demo}>
+                    <Icon name="zap" size={16} />
+                    {en ? 'Enter demo mode' : 'Entrar em modo demonstração'}
+                  </button>
+                )}
+              </div>
             </React.Fragment>
           )}
 

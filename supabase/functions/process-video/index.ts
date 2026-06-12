@@ -226,7 +226,9 @@ serve(async (req) => {
       model: 'whisper-1',
       response_format: 'verbose_json',
       timestamp_granularities: ['word'],
-      language: project.lang || 'pt'
+      language: (['pt','en','es','fr','de','it','ja','ko','zh'].includes(project.lang)
+  ? project.lang
+  : 'pt')
     });
 
     const words = transcription.words ?? [];

@@ -16,6 +16,8 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
   const [improving, setImproving] = useState(false);
   const [meta, setMeta] = useState(null);
   const [metaLoading, setMetaLoading] = useState(false);
+  const [variations, setVariations] = useState(null);
+  const [variationsLoading, setVariationsLoading] = useState(false);
   const [lines, setLines] = useState(TRANSCRIPT);
   const [playing, setPlaying] = useState(true);
   const [shareUrl, setShareUrl] = useState(null);
@@ -87,6 +89,46 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
     const r = await aiClipMeta({ ...clip, cap: caption }, lang);
     setMeta(r);
     setMetaLoading(false);
+  }
+
+  async function genVariations() {
+    setVariationsLoading(true);
+    setVariations(null);
+    try {
+      if (!Supa.client) {
+        // Fallback demo
+        setVariations([
+          { style: 'emocional', caption: `A {transformação} que ninguém te contou`, hook: 'Apelo emocional forte' },
+          { style: 'intrigante', caption: `Por que {isso} muda tudo que você sabe`, hook: 'Cria curiosidade e tensão' },
+          { style: 'didático',  caption: `O {método} que funciona em 3 passos`, hook: 'Promessa clara e prática' },
+        ]);
+        setVariationsLoading(false);
+        return;
+      }
+      const { data: { session } } = await Supa.client.auth.getSession();
+      const res = await fetch(
+        window.CORTA_CONFIG.SUPABASE_URL + '/functions/v1/generate-variations',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({
+            caption: caption.replace(/\{|\}/g, ''),
+            niche: clip.niche,
+            lang
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.variations) setVariations(data.variations);
+      else throw new Error(data.error || 'Erro ao gerar variações');
+    } catch (e) {
+      window.showToast?.(lang === 'en' ? 'Failed to generate variations' : 'Falha ao gerar variações', { type: 'error' });
+      console.error(e);
+    }
+    setVariationsLoading(false);
   }
 
   const tabs = [
@@ -177,6 +219,49 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
                   <span className={improving ? 'spin' : ''} style={{ display: 'none' }} />{improving ? (lang === 'en' ? 'Improving…' : 'Melhorando…') : T.ai_caption}
                 </Btn>
                 <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 8 }}>{lang === 'en' ? 'Wrap the punchiest word in {braces} to highlight it.' : 'Coloque a palavra mais forte entre {chaves} para destacá-la.'}</div>
+
+                {/* Botão gerar variações */}
+                <div style={{ marginTop: 12 }}>
+                  <Btn variant="soft" size="sm" icon={variationsLoading ? 'refresh' : 'wand'}
+                    onClick={genVariations} disabled={variationsLoading}>
+                    {variationsLoading
+                      ? (lang === 'en' ? 'Generating…' : 'Gerando…')
+                      : (lang === 'en' ? '3 variations' : '3 variações')}
+                  </Btn>
+                </div>
+
+                {/* Cards de variações */}
+                {variations && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                    <div className="pg-label" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 4 }}>
+                      {lang === 'en' ? 'Choose a variation' : 'Escolha uma variação'}
+                    </div>
+                    {variations.map((v, i) => (
+                      <button key={i}
+                        onClick={() => { setCaption(v.caption); setVariations(null); window.showToast?.(lang === 'en' ? 'Caption applied ✓' : 'Legenda aplicada ✓', { type: 'success', duration: 2000 }); }}
+                        style={{
+                          background: 'var(--surface-2)', border: '1.5px solid var(--border)',
+                          borderRadius: 'var(--r)', padding: '10px 12px', textAlign: 'left',
+                          cursor: 'pointer', transition: '.12s', width: '100%'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>
+                          {v.style}
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
+                          {v.caption.replace(/\{([^}]+)\}/g, (_, w) => `✦${w}✦`)}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{v.hook}</div>
+                      </button>
+                    ))}
+                    <button onClick={() => setVariations(null)}
+                      style={{ fontSize: 11, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}>
+                      {lang === 'en' ? 'Dismiss' : 'Fechar'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="panel-group">

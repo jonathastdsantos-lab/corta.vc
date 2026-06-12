@@ -158,6 +158,11 @@ function ScheduleScreen({ lang, openAI, user }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [modalClip, setModalClip] = useState('');
+  const [modalPlatform, setModalPlatform] = useState('tiktok');
+  const [modalDateTime, setModalDateTime] = useState('');
+  const [modalSubmitting, setModalSubmitting] = useState(false);
+  const [userClips, setUserClips] = useState([]);
 
   useEffect(() => {
     async function load() {
@@ -177,16 +182,31 @@ function ScheduleScreen({ lang, openAI, user }) {
         .eq('user_id', user.id)
         .order('scheduled_at', { ascending: true });
       setEvents(data || []);
+
+      // Carrega clips do usuário para o modal de agendamento
+      if (window.Supa?.client && user) {
+        window.Supa.client.from('clips')
+          .select('id, title, niche, thumbnail_url')
+          .eq('user_id', user.id)
+          .eq('status', 'rendered')
+          .order('score', { ascending: false })
+          .limit(20)
+          .then(({ data }) => setUserClips(data || []));
+      } else {
+        setUserClips(window.CLIPS || []);
+      }
+
       setLoading(false);
     }
     load();
   }, [user]);
 
   const dows = lang === 'en' ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-  const monthName = lang === 'en' ? 'June 2026' : 'Junho 2026';
-  // June 2026 starts on Monday (1st = Mon). Pad so 1 lands under Mon.
-  const firstDow = 1; // Monday
-  const days = 30;
+  const now = new Date();
+  const monthName = now.toLocaleDateString(lang === 'en' ? 'en-US' : 'pt-BR', { month: 'long', year: 'numeric' });
+  const firstDow = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const today = now.getDate();
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= days; d++) cells.push(d);
@@ -196,7 +216,6 @@ function ScheduleScreen({ lang, openAI, user }) {
     const day = new Date(e.scheduled_at).getDate();
     (evByDay[day] = evByDay[day] || []).push(e);
   });
-  const today = 11;
 
   return (
     <div className="page page-wide">
@@ -208,7 +227,12 @@ function ScheduleScreen({ lang, openAI, user }) {
         </div>
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" icon="sparkles" onClick={openAI}>{T.best_time}</Btn>
-          <Btn variant="dark" icon="plus">{lang === 'en' ? 'Schedule clip' : 'Agendar corte'}</Btn>
+          <Btn variant="dark" icon="plus" onClick={() => {
+            setModalDateTime(new Date(Date.now() + 30 * 60000).toISOString().slice(0,16));
+            setShowAddModal(true);
+          }}>
+            {lang === 'en' ? 'Schedule clip' : 'Agendar corte'}
+          </Btn>
         </div>
       </div>
 
@@ -274,7 +298,141 @@ function ScheduleScreen({ lang, openAI, user }) {
             <Btn variant="ghost" size="sm" icon="check" style={{ marginTop: 11 }} onClick={openAI}>{lang === 'en' ? 'Apply suggestion' : 'Aplicar sugestão'}</Btn>
           </div>
         </div>
+        </div>
       </div>
+
+      {/* Modal de novo agendamento */}
+      {showAddModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 999,
+          display: 'grid', placeItems: 'center', padding: 20 }}
+          onClick={() => setShowAddModal(false)}>
+          <div className="card fade-up" style={{ width: '100%', maxWidth: 440, padding: 24 }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 className="h3">{lang === 'en' ? 'Schedule clip' : 'Agendar corte'}</h3>
+              <IconBtn name="x" size={18} onClick={() => setShowAddModal(false)} />
+            </div>
+
+            {/* Seleção de clip */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-2)', display: 'block', marginBottom: 6 }}>
+                {lang === 'en' ? 'Clip' : 'Corte'}
+              </label>
+              <select
+                value={modalClip}
+                onChange={e => setModalClip(e.target.value)}
+                style={{ width: '100%', height: 42, padding: '0 12px', borderRadius: 'var(--r)',
+                  border: '1.5px solid var(--border-strong)', background: 'var(--surface)',
+                  color: 'var(--ink)', fontSize: 14, outline: 'none' }}>
+                <option value="">{lang === 'en' ? 'Choose a clip…' : 'Escolha um corte…'}</option>
+                {userClips.map(c => (
+                  <option key={c.id} value={c.id}>{c.title}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Seleção de plataforma */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-2)', display: 'block', marginBottom: 6 }}>
+                {lang === 'en' ? 'Platform' : 'Plataforma'}
+              </label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[
+                  { id: 'tiktok', label: 'TikTok' },
+                  { id: 'instagram', label: 'Instagram' },
+                  { id: 'youtube', label: 'Shorts' },
+                  { id: 'facebook', label: 'Facebook' },
+                  { id: 'linkedin', label: 'LinkedIn' },
+                  { id: 'kwai', label: 'Kwai' },
+                ].map(p => (
+                  <button key={p.id}
+                    onClick={() => setModalPlatform(p.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
+                      borderRadius: 99, border: `1.5px solid ${modalPlatform === p.id ? 'var(--accent)' : 'var(--border)'}`,
+                      background: modalPlatform === p.id ? 'var(--accent-soft)' : 'var(--surface)',
+                      color: modalPlatform === p.id ? 'var(--accent)' : 'var(--ink-2)',
+                      fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: '.12s'
+                    }}>
+                    <span className={`plat ${p.id}`} style={{ width: 20, height: 20, borderRadius: 5 }}>
+                      <Icon plat={p.id} size={11} />
+                    </span>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Data e hora */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-2)', display: 'block', marginBottom: 6 }}>
+                {lang === 'en' ? 'Date & time' : 'Data e horário'}
+              </label>
+              <input
+                type="datetime-local"
+                value={modalDateTime}
+                min={new Date(Date.now() + 10 * 60000).toISOString().slice(0,16)}
+                onChange={e => setModalDateTime(e.target.value)}
+                style={{ width: '100%', height: 42, padding: '0 12px', borderRadius: 'var(--r)',
+                  border: '1.5px solid var(--border-strong)', background: 'var(--surface)',
+                  color: 'var(--ink)', fontSize: 14, outline: 'none' }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <Btn variant="ghost" onClick={() => setShowAddModal(false)}>
+                {lang === 'en' ? 'Cancel' : 'Cancelar'}
+              </Btn>
+              <Btn variant="primary" icon={modalSubmitting ? 'refresh' : 'send'}
+                disabled={!modalClip || !modalDateTime || modalSubmitting}
+                onClick={async () => {
+                  if (!modalClip || !modalDateTime) return;
+                  setModalSubmitting(true);
+                  try {
+                    const scheduledAt = new Date(modalDateTime).toISOString();
+                    if (window.Supa?.client && user) {
+                      const { error } = await window.Supa.client.from('schedule').insert({
+                        user_id: user.id,
+                        clip_id: modalClip,
+                        platform: modalPlatform,
+                        scheduled_at: scheduledAt,
+                        status: 'queued'
+                      });
+                      if (error) throw error;
+                      // Recarrega eventos
+                      const { data } = await window.Supa.client
+                        .from('schedule')
+                        .select('*, clips(title, thumbnail_url, niche)')
+                        .eq('user_id', user.id)
+                        .order('scheduled_at', { ascending: true });
+                      setEvents(data || []);
+                    } else {
+                      // Demo: adiciona localmente
+                      const clipObj = userClips.find(c => c.id === modalClip);
+                      setEvents(prev => [...prev, {
+                        id: Date.now(), clip_id: modalClip, platform: modalPlatform,
+                        scheduled_at: scheduledAt, status: 'queued',
+                        clips: { title: clipObj?.title || 'Corte' }
+                      }]);
+                    }
+                    setShowAddModal(false);
+                    window.showToast?.(
+                      lang === 'en'
+                        ? `Scheduled for ${new Date(modalDateTime).toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}`
+                        : `Agendado para ${new Date(modalDateTime).toLocaleDateString('pt-BR', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'})}`,
+                      { type: 'success' }
+                    );
+                  } catch (err) {
+                    window.showToast?.(lang === 'en' ? 'Failed to schedule' : 'Falha ao agendar', { type: 'error' });
+                    console.error(err);
+                  }
+                  setModalSubmitting(false);
+                }}>
+                {modalSubmitting ? (lang === 'en' ? 'Scheduling…' : 'Agendando…') : (lang === 'en' ? 'Schedule' : 'Agendar')}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

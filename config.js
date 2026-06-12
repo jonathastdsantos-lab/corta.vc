@@ -8,7 +8,16 @@
    ============================================================ */
 window.CORTA_CONFIG = {
   SUPABASE_URL: "https://shzjchiortfrnpsoirrb.supabase.co",
-  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNoempjaGlvcnRmcm5wc29pcnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMTkwNDgsImV4cCI6MjA5Njc5NTA0OH0.tUNV3qau_VIqqMPig4Ng6HhSql9GV47zzYTwYaXL0oQ",
+  // Em produção: injete a anon key via variável de ambiente no Vercel.
+  // Nunca commite a chave real aqui.
+  // No Vercel: Settings → Environment Variables → NEXT_PUBLIC_SUPABASE_ANON_KEY
+  SUPABASE_ANON_KEY: (function() {
+    // Tenta ler de meta tag injetada pelo servidor (estratégia Vercel)
+    const meta = document.querySelector('meta[name="sb-anon-key"]');
+    if (meta && meta.content && meta.content.startsWith('eyJ')) return meta.content;
+    // Fallback: modo demo
+    return '';
+  })(),
 };
 
 // ATENÇÃO DEV: NUNCA COLOQUE A ANON KEY REAL NESTE ARQUIVO EM PRODUÇÃO!

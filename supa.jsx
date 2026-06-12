@@ -47,8 +47,8 @@ const Supa = {
       const { data } = await this.client.auth.getUser();
       if (!data?.user) return null;
       const u = data.user;
-      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url').eq('id', u.id).single();
-      return { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits || 0, avatar: prof?.avatar_url };
+      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url, onboarding_done, onboarding_preferences').eq('id', u.id).single();
+      return { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits ?? 0, avatar: prof?.avatar_url, onboarding_done: prof?.onboarding_done ?? false, onboarding_preferences: prof?.onboarding_preferences || {} };
     }
     return _demoRead();
   },
@@ -76,11 +76,11 @@ const Supa = {
       const { data, error } = await this.client.auth.signInWithPassword({ email: cleanEmail, password });
       if (error) return { error: this._translateErr(error.message) };
       const u = data.user;
-      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url').eq('id', u.id).single();
-      return { user: { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits || 0, avatar: prof?.avatar_url } };
+      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url, onboarding_done, onboarding_preferences').eq('id', u.id).single();
+      return { user: { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits ?? 0, avatar: prof?.avatar_url, onboarding_done: prof?.onboarding_done ?? false, onboarding_preferences: prof?.onboarding_preferences || {} } };
     }
     await new Promise(r => setTimeout(r, 500));
-    const user = { id: 'demo-' + Date.now(), email, name: email.split('@')[0], initials: _initials('', email), demo: true, plan: 'pro', credits: 999 };
+    const user = { id: 'demo-' + Date.now(), email, name: email.split('@')[0], initials: _initials('', email), demo: true, plan: 'free', credits: 10, onboarding_done: false };
     _demoWrite(user);
     return { user };
   },
@@ -89,6 +89,20 @@ const Supa = {
     const user = { id: 'demo-rafa', email: 'rafa@corta.vc', name: 'Rafael Alves', initials: 'RA', demo: true };
     _demoWrite(user);
     return { user };
+  },
+
+  async signInWithProvider(provider) {
+    if (this.client) {
+      const { data, error } = await this.client.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: window.location.origin + window.location.pathname
+        }
+      });
+      if (error) return { error: this._translateErr(error.message) };
+      return { data };
+    }
+    return this.signInDemo();
   },
 
   async signOut() {

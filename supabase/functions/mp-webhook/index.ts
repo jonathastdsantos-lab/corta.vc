@@ -77,13 +77,31 @@ serve(async (req) => {
 
     // 5. Se aprovado: atualizar plano e créditos
     if (paymentStatus === 'approved') {
-      const credits = PLAN_CREDITS[planId] ?? 60;
+      const newMonthlyCredits = PLAN_CREDITS[planId] ?? 60;
       const planExpiresAt = new Date();
       planExpiresAt.setMonth(planExpiresAt.getMonth() + 1);
 
+      // Para planos ilimitados (-1), seta -1 diretamente
+      // Para planos com créditos, SOMA os créditos restantes + novos créditos do plano
+      // (evita perda de créditos não usados no upgrade)
+      let creditsUpdate: number;
+      if (newMonthlyCredits === -1) {
+        creditsUpdate = -1; // ilimitado
+      } else {
+        // Busca créditos atuais
+        const { data: currentProfile } = await supabase
+          .from('profiles').select('credits, plan').eq('id', userId).single();
+        const currentCredits = currentProfile?.credits ?? 0;
+        // Se estava em plano pago (não free), soma os créditos restantes
+        // Se era free, começa do zero com os créditos do novo plano
+        creditsUpdate = currentProfile?.plan === 'free'
+          ? newMonthlyCredits
+          : Math.max(currentCredits, 0) + newMonthlyCredits;
+      }
+
       const { error: updateErr } = await supabase.from('profiles').update({
         plan: planId,
-        credits: credits,
+        credits: creditsUpdate,
         subscription_id: String(paymentId),
         plan_expires_at: planExpiresAt.toISOString()
       }).eq('id', userId);
@@ -97,6 +115,28 @@ serve(async (req) => {
         title: `Plano ${planId} ativado! 🚀`,
         body: `Seu pagamento foi aprovado. Aproveite todos os recursos do plano ${planId}.`
       });
+
+      // Enviar e-mail de recibo
+      try {
+        const { data: userProfile } = await supabase
+          .from('profiles').select('name').eq('id', userId).single();
+
+        await supabase.functions.invoke('send-email', {
+          body: {
+            type: 'payment_receipt',
+            to: payment.payer?.email || '',
+            data: {
+              name: userProfile?.name || 'Cliente',
+              plan: planId,
+              amount: payment.transaction_amount * 100,
+              expires_at: planExpiresAt.toISOString()
+            }
+          }
+        });
+      } catch (emailErr) {
+        console.warn('Falha ao enviar e-mail de recibo:', emailErr);
+        // Não falha o webhook por causa do e-mail
+      }
 
       console.log(`Plano ${planId} ativado para ${userId}`);
     }

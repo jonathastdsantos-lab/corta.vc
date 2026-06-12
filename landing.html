@@ -394,6 +394,12 @@
     
     // Espera os planos carregarem do plans.js e renderiza
     setTimeout(renderPlans, 100);
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
   </script>
 </body>
 </html>
