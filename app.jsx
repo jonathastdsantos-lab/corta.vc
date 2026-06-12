@@ -233,9 +233,8 @@ function App() {
         <div className="app">
           {/* SIDEBAR */}
           <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-            <div className="brand">
-              <div className="brand-mark"><Icon name="scissors" size={17} /></div>
-              <span className="brand-name hide-collapsed">Corta<b>.vc</b></span>
+            <div className="brand" style={{ padding: '16px', display: 'flex', justifyContent: 'center' }}>
+              <img src="/logo.png" alt="Corta.vc" style={{ height: 32 }} />
             </div>
 
             <Btn variant="primary" icon="plus" onClick={() => go('import')} style={{ marginBottom: 6, justifyContent: collapsed ? 'center' : 'flex-start' }}>
@@ -294,8 +293,8 @@ function App() {
             )}
             <div className="topbar">
               <IconBtn name="drag" size={18} onClick={() => setCollapsed(!collapsed)} />
-              <div className="crumb">
-                <span>Corta.vc</span><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
+              <div className="crumb" style={{ display: 'flex', alignItems: 'center' }}>
+                <img src="/logo.png" alt="Corta.vc" style={{ height: 20, marginRight: 8 }} /><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
                 {project && route === 'clips' && <React.Fragment><Icon name="chevR" size={15} /><span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{project.title}</span></React.Fragment>}
               </div>
               <div className="topbar-spacer" />
