@@ -11,7 +11,7 @@ function CommunityTemplates({ lang, openClip }) {
         { name: 'Gameplay Rápida', author: '@alanzoka', uses: '8.5k', style: 'netflix' },
         { name: 'Pregação Emocionante', author: '@deiveleonardo', uses: '15k', style: 'dev' },
       ].map((t, i) => (
-        <div key={i} className="tpl-card" onClick={() => openClip && openClip(CLIPS[0])}>
+        <div key={i} className="tpl-card" onClick={() => openClip && openClip(CLIPS[i % CLIPS.length])}>
           <div className="tpl-preview" style={{ background: 'var(--surface-3)', aspectRatio: '16/11' }}>
             <div style={{ position: 'relative', zIndex: 2, padding: '0 14px', textAlign: 'center' }}>
               <CaptionText text={en ? 'Community' : 'Comunidade'} style={CAPTION_STYLES.find(s=>s.id===t.style)} fontSize={20} />
@@ -155,39 +155,28 @@ function nicheIcon(k) {
 
 function ScheduleScreen({ lang, openAI, user }) {
   const T = STR[lang];
-  const [schedule, setSchedule] = useState([]);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+  const [showAddModal, setShowAddModal] = useState(false);
+
   useEffect(() => {
     async function load() {
-      if (!window.Supa?.client) {
-        setSchedule(window.SCHEDULE || []);
+      if (!window.Supa?.client || !user) {
+        setEvents(window.SCHEDULE.map(e => ({
+          ...e, id: e.day + e.plat,
+          clips: { title: window.CLIPS.find(c => c.id === e.clip)?.title || 'Corte' },
+          scheduled_at: `2026-06-${String(e.day).padStart(2,'0')}T${e.time}:00`,
+          platform: e.plat, status: 'queued'
+        })));
         setLoading(false);
         return;
       }
       const { data } = await window.Supa.client
         .from('schedule')
-        .select('*, clips(*)')
-        .eq('user_id', user?.id || '')
+        .select('*, clips(title, thumbnail_url, niche)')
+        .eq('user_id', user.id)
         .order('scheduled_at', { ascending: true });
-        
-      if (data) {
-        const mapped = data.map(d => {
-          const date = new Date(d.scheduled_at);
-          return {
-            id: d.id,
-            clip: d.clip_id,
-            clipData: d.clips,
-            plat: d.platform,
-            day: date.getDate(),
-            time: date.getHours() + ':00',
-            status: d.status
-          };
-        });
-        setSchedule(mapped);
-      } else {
-        setSchedule(window.SCHEDULE || []);
-      }
+      setEvents(data || []);
       setLoading(false);
     }
     load();
@@ -203,7 +192,10 @@ function ScheduleScreen({ lang, openAI, user }) {
   for (let d = 1; d <= days; d++) cells.push(d);
   while (cells.length % 7) cells.push(null);
   const evByDay = {};
-  schedule.forEach(e => { (evByDay[e.day] = evByDay[e.day] || []).push(e); });
+  events.forEach(e => {
+    const day = new Date(e.scheduled_at).getDate();
+    (evByDay[day] = evByDay[day] || []).push(e);
+  });
   const today = 11;
 
   return (
@@ -235,10 +227,9 @@ function ScheduleScreen({ lang, openAI, user }) {
               <div key={i} className={`cal-cell ${d == null ? 'muted' : ''} ${d === today ? 'today' : ''}`}>
                 {d != null && <span className="cal-date">{d}</span>}
                 {(evByDay[d] || []).map((e, j) => {
-                  const clip = e.clipData || window.CLIPS?.find(c => c.id === e.clip);
                   return (
-                    <div key={j} className="cal-event" style={{ background: platColor(e.plat) }} title={clip?.title}>
-                      <Icon plat={e.plat} size={11} />{e.time}
+                    <div key={j} className="cal-event" style={{ background: platColor(e.platform) }} title={e.clips?.title}>
+                      <Icon plat={e.platform} size={11} />{new Date(e.scheduled_at).getHours() + ':00'}
                     </div>
                   );
                 })}
@@ -250,20 +241,20 @@ function ScheduleScreen({ lang, openAI, user }) {
         {/* Queue */}
         <div className="col" style={{ gap: 16 }}>
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div className="row between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+            <div className="row between" style={{ padding: '16px 16px 12px' }}>
               <h3 className="h3">{T.queue}</h3>
-              <span className="tag accent">{schedule.length} {T.posts_scheduled}</span>
+              <span className="tag accent">{events.length} {T.posts_scheduled}</span>
             </div>
-            {loading ? <div style={{padding: 16}}>Carregando...</div> : schedule.slice(0, 5).map((e, i) => {
-              const clip = e.clipData || window.CLIPS?.find(c => c.id === e.clip);
+            {loading ? <div style={{padding: 16}}>Carregando...</div> : events.slice(0, 5).map((e, i) => {
+              const clip = e.clips || window.CLIPS?.find(c => c.id === e.clip);
               return (
                 <div key={i} className="queue-item">
-                  <Thumb niche={clip.niche} className="qthumb" label={false} />
+                  <Thumb niche={clip?.niche} className="qthumb" label={false} />
                   <div className="grow" style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip?.title}</div>
                     <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                      <span className={`plat ${e.plat}`} style={{ width: 20, height: 20, borderRadius: 5 }}><Icon plat={e.plat} size={11} /></span>
-                      <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{lang === 'en' ? 'Jun' : ''} {e.day}{lang === 'en' ? '' : '/06'} · {e.time}</span>
+                      <span className={`plat ${e.platform}`} style={{ width: 20, height: 20, borderRadius: 5 }}><Icon plat={e.platform} size={11} /></span>
+                      <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{lang === 'en' ? 'Jun' : ''} {new Date(e.scheduled_at).getDate()}{lang === 'en' ? '' : '/06'} · {new Date(e.scheduled_at).getHours() + ':00'}</span>
                     </div>
                   </div>
                   <IconBtn name="more" size={16} />

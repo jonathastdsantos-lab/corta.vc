@@ -38,16 +38,18 @@ async function aiImproveCaption(text, lang) {
 }
 
 // ---------- AI Chat Drawer ----------
-function AIChat({ open, onClose, lang, context }) {
+function AIChat({ open, onClose, lang, context, msgs, onMsgs }) {
   const T = STR[lang];
-  const [msgs, setMsgs] = useState([{ role: 'bot', text: T.ai_greeting }]);
+  const defaultMsgs = [{ role: 'bot', text: T.ai_greeting }];
+  const [localMsgs, setLocalMsgs] = useState(msgs || defaultMsgs);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const bodyRef = useRef(null);
 
   useEffect(() => {
+    if (onMsgs) onMsgs(localMsgs);
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [msgs, busy]);
+  }, [localMsgs, busy]);
 
   const quick = React.useMemo(() => {
     const en = lang === 'en';
@@ -71,15 +73,15 @@ function AIChat({ open, onClose, lang, context }) {
     const q = (text ?? input).trim();
     if (!q || busy) return;
     setInput('');
-    const next = [...msgs, { role: 'user', text: q }];
-    setMsgs(next);
+    const next = [...localMsgs, { role: 'user', text: q }];
+    setLocalMsgs(next);
     setBusy(true);
     let systemContext = 'Você é a IA assistente do Corta.vc.';
     if (context?.clip) systemContext += `\nEstamos editando o clip "${context.clip.title}". Ele foca no nicho de ${NICHES[context.clip.niche]?.label} com nota de viralização ${context.clip.score}/100.`;
     if (context?.user) systemContext += `\nO usuário está no plano ${context.user.plan} e tem ${context.user.credits} créditos. Ajude-o a otimizar o uso.`;
     const prompt = `${systemContext}\nSeja prático, direto e animado, como um editor parceiro.\nResponda em ${lang === 'en' ? 'English' : 'português do Brasil'}, em no máximo 90 palavras. Use quebras de linha curtas. Pergunta do usuário: "${q}"`;
     const r = await askClaude(prompt);
-    setMsgs(m => [...m, { role: 'bot', text: r || (lang === 'en' ? 'I had trouble reaching the AI just now — try again in a sec.' : 'Tive um problema pra falar com a IA agora — tenta de novo em instantes.') }]);
+    setLocalMsgs(m => [...m, { role: 'bot', text: r || (lang === 'en' ? 'I had trouble reaching the AI just now — try again in a sec.' : 'Tive um problema pra falar com a IA agora — tenta de novo em instantes.') }]);
     setBusy(false);
   }
 
@@ -97,7 +99,7 @@ function AIChat({ open, onClose, lang, context }) {
         </div>
 
         <div className="ai-body" ref={bodyRef}>
-          {msgs.map((m, i) => (
+          {localMsgs.map((m, i) => (
             <div key={i} className={`ai-msg ${m.role}`}>
               {m.role === 'bot' && <div className="av" style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}><Icon name="sparkles" size={15} /></div>}
               <div className="ai-bubble">

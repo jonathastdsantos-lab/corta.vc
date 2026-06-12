@@ -102,6 +102,15 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [clipsCount, setClipsCount] = useState(0);
+  const [aiMsgs, setAiMsgs] = useState(null);
+
+  useEffect(() => {
+    function handleOutsideClick(e) {
+      if (!e.target.closest('.notif-wrapper')) setShowNotif(false);
+    }
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, []);
 
   async function markNotifRead(id) {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -254,7 +263,11 @@ function App() {
                       {user.plan}
                     </span>
                   </div>
-                  <div className="meter"><i style={{ width: Math.min(100, (user.credits / (user.plan === 'free' ? 60 : 999)) * 100) + '%' }} /></div>
+                  <div className="meter"><i style={{ width: (() => {
+                    const plan = window.CORTA_PLANS?.[user.plan];
+                    const max = plan?.credits_monthly > 0 ? plan.credits_monthly : 500;
+                    return Math.min(100, (user.credits / max) * 100) + '%';
+                  })() }} /></div>
                   <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{user.credits} {T.credits}</div>
                 </div>
               )}
@@ -289,8 +302,16 @@ function App() {
               </div>
               <IconBtn name="globe" bordered onClick={() => setTweak('lang', lang === 'en' ? 'pt' : 'en')} title="PT / EN" />
               
-              <div style={{ position: 'relative' }}>
-                <NotifDropdown notifications={notifications} open={showNotif} onClose={() => setShowNotif(!showNotif)} onRead={markNotifRead} lang={lang} />
+              <div className="notif-wrapper" style={{ position: 'relative' }}>
+                <button className="btn-icon bordered" style={{ position: 'relative' }}
+                  onClick={() => setShowNotif(!showNotif)}>
+                  <Icon name="bell" size={18} />
+                  {notifications.filter(n => !n.read).length > 0 && (
+                    <span style={{ position: 'absolute', top: 4, right: 4, width: 8, height: 8,
+                      borderRadius: 99, background: 'var(--accent)', border: '2px solid var(--surface)' }} />
+                  )}
+                </button>
+                <NotifDropdown notifications={notifications} open={showNotif} onClose={() => setShowNotif(false)} onRead={markNotifRead} lang={lang} />
               </div>
 
               <Btn variant="ghost" icon="sparkles" onClick={() => setAiOpen(true)}>{T.ask_ai}</Btn>
@@ -320,7 +341,7 @@ function App() {
           <span className="spark"><Icon name="sparkles" size={15} /></span>{T.ai_assistant}
         </button>
       )}
-      <AIChat open={aiOpen} onClose={() => setAiOpen(false)} lang={lang} context={{ clip: route === 'editor' ? clip : null, user }} />
+      <AIChat open={aiOpen} onClose={() => setAiOpen(false)} lang={lang} context={{ clip: route === 'editor' ? clip : null, user }} msgs={aiMsgs} onMsgs={setAiMsgs} />
 
       {/* TWEAKS */}
       <TweaksPanel title="Tweaks">

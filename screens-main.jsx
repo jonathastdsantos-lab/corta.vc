@@ -7,6 +7,7 @@ function Dashboard({ lang, go, openAI, user }) {
   const [link, setLink] = useState('');
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [userStats, setUserStats] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -24,7 +25,22 @@ function Dashboard({ lang, go, openAI, user }) {
       setProjects(data || []);
       setLoading(false);
     }
+    
+    async function loadStats() {
+      if (!Supa.client || !user) return;
+      const [clipsRes, postedRes] = await Promise.all([
+        Supa.client.from('clips').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+        Supa.client.from('schedule').select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id).eq('status', 'published'),
+      ]);
+      setUserStats({
+        clips: clipsRes.count || 0,
+        posted: postedRes.count || 0,
+      });
+    }
+
     load();
+    loadStats();
   }, [user]);
 
   const sources = [
@@ -35,7 +51,7 @@ function Dashboard({ lang, go, openAI, user }) {
   return (
     <div className="page">
       <div className="fade-up" style={{ marginBottom: 26 }}>
-        <h1 className="h1">{T.greeting} <span style={{ color: 'var(--accent)' }}>✦</span></h1>
+        <h1 className="h1">{typeof T.greeting === 'function' ? T.greeting(user?.name?.split(' ')[0] || '') : T.greeting} <span style={{ color: 'var(--accent)' }}>✦</span></h1>
         <p className="sub">{T.greeting_sub}</p>
       </div>
 
@@ -60,11 +76,24 @@ function Dashboard({ lang, go, openAI, user }) {
 
       {/* Stats */}
       <div className="stat-row stagger" style={{ marginBottom: 30 }}>
-        {STATS.map(s => (
+        {userStats ? [
+          { key: 'clips', label: { pt: 'Cortes criados', en: 'Clips made' },
+            num: String(userStats.clips), delta: '', dir: 'up', icon: 'scissors' },
+          { key: 'posted', label: { pt: 'Publicados', en: 'Published' },
+            num: String(userStats.posted), delta: '', dir: 'up', icon: 'send' },
+          { key: 'credits', label: { pt: 'Créditos restantes', en: 'Credits left' },
+            num: String(user?.credits || 0), delta: '', dir: user?.credits > 5 ? 'up' : 'down', icon: 'zap' },
+        ].map(s => (
           <div key={s.key} className="stat">
             <div className="label"><Icon name={s.icon} size={15} />{s.label[lang]}</div>
             <div className="num">{s.num}</div>
-            <div className={`delta ${s.dir}`}>{s.dir === 'up' ? '↑' : '↓'} {s.delta}</div>
+            {s.delta && <div className={`delta ${s.dir}`}>{s.dir === 'up' ? '↑' : '↓'} {s.delta}</div>}
+          </div>
+        )) : STATS.slice(0,3).map(s => (
+          <div key={s.key} className="stat">
+            <div className="label"><Icon name={s.icon} size={15} />{s.label[lang]}</div>
+            <div className="num">{s.num}</div>
+            {s.delta && <div className={`delta ${s.dir}`}>{s.dir === 'up' ? '↑' : '↓'} {s.delta}</div>}
           </div>
         ))}
       </div>
@@ -157,6 +186,46 @@ function ImportScreen({ lang, go, user }) {
     setUploading(false);
     go('processing');
   }
+  const [linkValue, setLinkValue] = useState('');
+
+  async function handleLinkSubmit() {
+    if (!linkValue.trim()) return;
+    setUploading(true);
+    
+    if (Supa.client && user) {
+      const { data: proj, error } = await Supa.client.from('projects').insert({
+        user_id: user.id,
+        title: linkValue.includes('youtube') ? 'Vídeo do YouTube' : 'Vídeo importado',
+        source_type: linkValue.includes('youtube') ? 'youtube'
+          : linkValue.includes('drive') ? 'drive'
+          : linkValue.includes('twitch') ? 'twitch' : 'link',
+        source_url: linkValue.trim(),
+        status: 'processing'
+      }).select().single();
+      
+      if (!error && proj) {
+        try {
+          const { data: { session } } = await Supa.client.auth.getSession();
+          await fetch(window.CORTA_CONFIG.SUPABASE_URL + '/functions/v1/process-video', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session?.access_token}`
+            },
+            body: JSON.stringify({ project_id: proj.id, user_id: user.id })
+          });
+        } catch(e) { console.error('Erro ao iniciar processamento', e); }
+        
+        setUploading(false);
+        go('processing', { project: proj });
+        return;
+      }
+    }
+    
+    setUploading(false);
+    go('processing');
+  }
+
   const durs = [
     { v: 'auto', label: T.auto }, { v: '<30', label: '<30s' },
     { v: '30-60', label: '30–60s' }, { v: '60-90', label: '60–90s' },
@@ -170,11 +239,25 @@ function ImportScreen({ lang, go, user }) {
           <p className="sub" style={{ maxWidth: 460, margin: '8px auto 0' }}>{T.import_sub}</p>
         </div>
 
-        <div className="dropzone" onClick={() => !uploading && fileRef.current?.click()}>
+        <div className="dropzone" onClick={(e) => { if (e.target.tagName !== 'INPUT' && !uploading) fileRef.current?.click(); }}>
           <input ref={fileRef} type="file" accept="video/*" hidden onChange={onFile} />
           <div className="dz-icon"><Icon name={uploading ? 'refresh' : 'upload'} size={26} className={uploading ? 'spin' : ''} /></div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{uploading ? (lang === 'en' ? `Uploading… ${Math.round(uploadPct)}%` : `Enviando… ${Math.round(uploadPct)}%`) : (lang === 'en' ? 'Drop your video or paste a link' : 'Solte seu vídeo ou cole um link')}</div>
-          <div className="sub" style={{ marginTop: 4 }}>{T.accepts}</div>
+          {uploading ? (
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{lang === 'en' ? `Uploading… ${Math.round(uploadPct)}%` : `Enviando… ${Math.round(uploadPct)}%`}</div>
+          ) : (
+            <div style={{ width: '100%', maxWidth: 400, marginTop: 8 }}>
+              <input
+                value={linkValue}
+                onChange={e => setLinkValue(e.target.value)}
+                placeholder={T.paste_ph}
+                onKeyDown={e => { if (e.key === 'Enter' && linkValue.trim()) handleLinkSubmit(); }}
+                style={{ width: '100%', textAlign: 'center', background: 'var(--surface-3)', border: '1px solid var(--surface-2)', padding: 12, borderRadius: 8, color: 'var(--fg)' }}
+                onClick={e => e.stopPropagation()}
+              />
+              <div style={{ fontSize: 14, fontWeight: 700, marginTop: 12 }}>{lang === 'en' ? 'or click to upload' : 'ou clique para enviar arquivo'}</div>
+            </div>
+          )}
+          <div className="sub" style={{ marginTop: 8 }}>{T.accepts}</div>
           <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 16 }}>
             {['youtube', 'instagram', 'tiktok'].map(p => <span key={p} className="plat" style={{ width: 30, height: 30 }} ><Icon plat={p} size={16} /></span>)}
             <span className="source-chip"><Icon name="link" size={14} />Drive · Zoom · Twitch</span>
@@ -228,7 +311,7 @@ function ImportScreen({ lang, go, user }) {
 
         <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <Btn variant="ghost" onClick={() => go('dashboard')}>{lang === 'en' ? 'Cancel' : 'Cancelar'}</Btn>
-          <Btn variant="primary" size="lg" icon="sparkles" onClick={() => go('processing')}>{T.generate}</Btn>
+          <Btn variant="primary" size="lg" icon="sparkles" onClick={() => linkValue.trim() ? handleLinkSubmit() : go('processing')}>{T.generate}</Btn>
         </div>
       </div>
     </div>
@@ -238,6 +321,26 @@ function ImportScreen({ lang, go, user }) {
 function ProcessingScreen({ lang, go, project }) {
   const T = STR[lang];
   const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    async function triggerProcessing() {
+      if (!Supa.client || !project?.id || project.status !== 'processing') return;
+      try {
+        const { data: { session } } = await Supa.client.auth.getSession();
+        await fetch(window.CORTA_CONFIG.SUPABASE_URL + '/functions/v1/process-video', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({ project_id: project.id, user_id: project.user_id })
+        });
+      } catch(e) {
+        console.warn('Erro ao disparar processamento:', e);
+      }
+    }
+    triggerProcessing();
+  }, [project?.id]);
 
   useEffect(() => {
     let iv;
@@ -279,11 +382,13 @@ function ProcessingScreen({ lang, go, project }) {
   );
 }
 
-function ClipsScreen({ lang, go, project }) {
+function ClipsScreen({ lang, go, project, openClip }) {
   const T = STR[lang];
   const [clips, setClips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [sort, setSort] = useState('score');
+  const [nicheFilter, setNicheFilter] = useState('all');
 
   useEffect(() => {
     async function load() {
@@ -302,6 +407,15 @@ function ClipsScreen({ lang, go, project }) {
     }
     load();
   }, [project]);
+
+  const filtered = useMemo(() => {
+    let arr = [...clips];
+    if (nicheFilter !== 'all') arr = arr.filter(c => c.niche === nicheFilter);
+    if (sort === 'score') arr.sort((a, b) => b.score - a.score);
+    if (sort === 'recent') arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    if (sort === 'dur') arr.sort((a, b) => a.duration - b.duration);
+    return arr;
+  }, [clips, sort, nicheFilter]);
 
   async function dl(clip, e) {
     e.stopPropagation();
@@ -325,10 +439,33 @@ function ClipsScreen({ lang, go, project }) {
         <h2 className="h2">{project?.title || 'Projeto'}</h2>
       </div>
 
+      <div className="filter-bar" style={{ marginBottom: 16 }}>
+        {['all', ...new Set(clips.map(c => c.niche).filter(Boolean))].map(n => (
+          <button key={n}
+            className={`chip-toggle ${nicheFilter === n ? 'on' : ''}`}
+            onClick={() => setNicheFilter(n)}>
+            {n === 'all' ? (lang === 'en' ? 'All' : 'Todos') : (NICHES[n]?.label || n)}
+          </button>
+        ))}
+        <div style={{ marginLeft: 'auto' }}>
+          <div className="seg">
+            <button className={sort === 'score' ? 'on' : ''} onClick={() => setSort('score')}>
+              {lang === 'en' ? 'Score' : 'Score'}
+            </button>
+            <button className={sort === 'recent' ? 'on' : ''} onClick={() => setSort('recent')}>
+              {lang === 'en' ? 'Recent' : 'Recente'}
+            </button>
+            <button className={sort === 'dur' ? 'on' : ''} onClick={() => setSort('dur')}>
+              {lang === 'en' ? 'Duration' : 'Duração'}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div className="clips-grid stagger">
         {loading ? (
           <div style={{padding: 20}}>Carregando cortes...</div>
-        ) : clips.map(c => (
+        ) : filtered.map(c => (
           <div key={c.id} className="clip-card fade-up">
             <div className="clip-top" onClick={() => c.storage_path && setPreviewUrl(Supa.client.storage.from('clips').getPublicUrl(c.storage_path).data.publicUrl)}>
               {c.thumbnail_url ? (
@@ -346,9 +483,9 @@ function ClipsScreen({ lang, go, project }) {
             <div className="body">
               <div className="title" style={{ fontSize: 13 }}>{c.title}</div>
               <div className="meta" style={{ marginTop: 8 }}>
-                <Btn size="sm" variant="ghost" onClick={() => go('editor', { project, clip: c })}>{T.edit}</Btn>
+                <Btn size="sm" variant="ghost" onClick={() => openClip ? openClip(c) : go('editor', { project, clip: c })}>{T.edit}</Btn>
                 <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
-                  <Btn size="sm" variant="ghost" icon="send">{lang === 'en' ? 'Post' : 'Postar'}</Btn>
+                  <Btn size="sm" variant="ghost" icon="send" onClick={e => { e.stopPropagation(); go('schedule'); }}>{lang === 'en' ? 'Post' : 'Postar'}</Btn>
                   <Btn size="sm" variant="primary" icon="download" onClick={(e) => dl(c, e)}>{T.dl}</Btn>
                 </div>
               </div>
