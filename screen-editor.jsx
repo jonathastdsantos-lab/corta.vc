@@ -18,6 +18,38 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
   const [metaLoading, setMetaLoading] = useState(false);
   const [lines, setLines] = useState(TRANSCRIPT);
   const [playing, setPlaying] = useState(true);
+  const [shareUrl, setShareUrl] = useState(null);
+  const [sharing, setSharing] = useState(false);
+
+  async function handleShare() {
+    if (!Supa.client) {
+      alert('Modo demo — no plano real geraria um link público de 24h.');
+      return;
+    }
+    setSharing(true);
+    try {
+      const { data: { session } } = await Supa.client.auth.getSession();
+      const res = await fetch(
+        window.CORTA_CONFIG.SUPABASE_URL + '/functions/v1/share-clip',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({ clip_id: clip.id })
+        }
+      );
+      const data = await res.json();
+      if (data.share_url) {
+        setShareUrl(data.share_url);
+        navigator.clipboard?.writeText(data.share_url).catch(() => {});
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setSharing(false);
+  }
 
   // Drag and drop do texto
   function handleLineDragStart(e, idx) { e.dataTransfer.setData('text/plain', idx); }
@@ -312,6 +344,29 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
               <div className="panel-group">
                 <Btn variant="primary" size="lg" icon="send" className="grow" style={{ width: '100%', marginBottom: 9 }} onClick={openAI}>{lang === 'en' ? 'Schedule post' : 'Agendar publicação'}</Btn>
                 <Btn variant="ghost" size="lg" icon="download" style={{ width: '100%' }}>{lang === 'en' ? 'Download clip' : 'Baixar corte'}</Btn>
+                <div style={{ marginTop: 12 }}>
+                  {!shareUrl ? (
+                    <Btn variant="ghost" size="lg" icon={sharing ? 'refresh' : 'link'}
+                      disabled={sharing} onClick={handleShare} style={{ width: '100%' }}>
+                      {sharing
+                        ? (lang === 'en' ? 'Generating link…' : 'Gerando link…')
+                        : (lang === 'en' ? 'Share public link (24h)' : 'Compartilhar link público (24h)')}
+                    </Btn>
+                  ) : (
+                    <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--r)', padding: '10px 12px' }}>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
+                        {lang === 'en' ? 'Link copied! Expires in 24h:' : 'Link copiado! Expira em 24h:'}
+                      </div>
+                      <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--accent)',
+                        wordBreak: 'break-all', marginBottom: 8 }}>{shareUrl}</div>
+                      <Btn variant="ghost" size="sm" icon="copy"
+                        onClick={() => navigator.clipboard?.writeText(shareUrl)}>
+                        {lang === 'en' ? 'Copy again' : 'Copiar novamente'}
+                      </Btn>
+                    </div>
+                  )}
+                </div>
                 <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 12, textAlign: 'center' }}>1080×1920 · MP4 · {lang === 'en' ? 'no watermark' : 'sem marca d\'água'}</div>
               </div>
             </React.Fragment>

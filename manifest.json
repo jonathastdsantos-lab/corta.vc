@@ -4,8 +4,8 @@
   "description": "Transforme vídeos longos em cortes virais com IA",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#09090b",
-  "theme_color": "#e11d48",
+  "background_color": "#f4f2ee",
+  "theme_color": "#e8543b",
   "icons": [
     {
       "src": "/icon-192.png",

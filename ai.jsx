@@ -49,9 +49,23 @@ function AIChat({ open, onClose, lang, context }) {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [msgs, busy]);
 
-  const quick = lang === 'en'
-    ? ['Suggest 3 viral hooks', 'Write a caption', 'Best hashtags for this', 'Which clip should I post first?']
-    : ['Sugira 3 ganchos virais', 'Escreva uma legenda', 'Melhores hashtags', 'Qual corte postar primeiro?'];
+  const quick = React.useMemo(() => {
+    const en = lang === 'en';
+    if (context?.clip) {
+      const niche = NICHES[context?.clip?.niche]?.label || 'vídeo';
+      return en
+        ? [`Improve this caption`, `3 title variations`, `Best hashtags for ${niche}`, `What makes this viral?`]
+        : [`Melhorar esta legenda`, `3 variações de título`, `Hashtags para ${niche}`, `Por que esse corte viraliza?`];
+    }
+    if (context?.user?.credits <= 3) {
+      return en
+        ? ['How many credits do I have?', 'What can I do with free plan?', 'How to upgrade?', 'Best use of my last credits']
+        : ['Quantos créditos tenho?', 'O que faço com o plano free?', 'Como fazer upgrade?', 'Melhor uso dos meus créditos'];
+    }
+    return en
+      ? ['How to import from YouTube?', 'Which niche has more views?', 'Best time to post in Brazil', 'How to make viral hooks?']
+      : ['Como importar do YouTube?', 'Qual nicho tem mais views?', 'Melhor horário para postar no BR', 'Como fazer ganchos virais?'];
+  }, [lang, context]);
 
   async function send(text) {
     const q = (text ?? input).trim();

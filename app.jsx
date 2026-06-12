@@ -19,7 +19,7 @@ const NAV = [
   { id: 'analytics', icon: 'chart', key: 'nav_analytics' },
 ];
 
-function NotifDropdown({ notifications, onClose, onRead, lang }) {
+function NotifDropdown({ notifications, open, onClose, onRead, lang }) {
   const en = lang === 'en';
   const unread = notifications.filter(n => !n.read).length;
 
@@ -34,7 +34,7 @@ function NotifDropdown({ notifications, onClose, onRead, lang }) {
             borderRadius: 99, background: 'var(--accent)', border: '2px solid var(--surface)' }} />
         )}
       </button>
-      {unread >= 0 && notifications && (
+      {open && (
         <div className="card fade-up" style={{
           position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 320,
           zIndex: 100, boxShadow: 'var(--shadow-pop)', overflow: 'hidden'
@@ -98,10 +98,10 @@ function App() {
 
   const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
-  const [showLanding, setShowLanding] = useState(true);
   const [showNotif, setShowNotif] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [clipsCount, setClipsCount] = useState(0);
 
   async function markNotifRead(id) {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -148,6 +148,10 @@ function App() {
         if (u && !u.onboarding_done) setShowOnboarding(true);
 
         if (u && Supa.client) {
+          Supa.client.from('clips').select('id', { count: 'exact', head: true })
+            .eq('user_id', u.id)
+            .then(({ count }) => setClipsCount(count || 0));
+
           Supa.client.from('notifications')
             .select('*').eq('user_id', u.id)
             .order('created_at', { ascending: false }).limit(20)
@@ -204,9 +208,6 @@ function App() {
   if (!authReady) return <div className="page" style={{placeItems:'center'}}><Icon name="refresh" className="spin" size={32} /></div>;
 
   if (!user) {
-    if (showLanding && window.LandingPage) {
-      return <window.LandingPage onLogin={() => setShowLanding(false)} />;
-    }
     return <AuthScreen lang={lang} onAuth={u => { setUser(u); }} />;
   }
 
@@ -236,7 +237,9 @@ function App() {
                   onClick={() => go(n.id)}>
                   <Icon name={n.icon} size={18} />
                   <span className="hide-collapsed">{T[n.key]}</span>
-                  {n.id === 'clips' && !collapsed && <span className="nav-badge">9</span>}
+                  {n.id === 'clips' && !collapsed && clipsCount > 0 && (
+                    <span className="nav-badge">{clipsCount > 99 ? '99+' : clipsCount}</span>
+                  )}
                 </button>
               ))}
             </nav>
@@ -286,10 +289,8 @@ function App() {
               </div>
               <IconBtn name="globe" bordered onClick={() => setTweak('lang', lang === 'en' ? 'pt' : 'en')} title="PT / EN" />
               
-              <div style={{ position: 'relative' }} onMouseLeave={() => setShowNotif(false)}>
-                <div onMouseEnter={() => setShowNotif(true)}>
-                  <NotifDropdown notifications={notifications} onClose={() => setShowNotif(!showNotif)} onRead={markNotifRead} lang={lang} />
-                </div>
+              <div style={{ position: 'relative' }}>
+                <NotifDropdown notifications={notifications} open={showNotif} onClose={() => setShowNotif(!showNotif)} onRead={markNotifRead} lang={lang} />
               </div>
 
               <Btn variant="ghost" icon="sparkles" onClick={() => setAiOpen(true)}>{T.ask_ai}</Btn>
@@ -302,7 +303,7 @@ function App() {
               {route === 'clips' && <ClipsScreen lang={lang} go={go} project={project} openClip={openClip} />}
               {route === 'templates' && <TemplatesScreen lang={lang} openClip={openClip} />}
               {route === 'schedule' && <ScheduleScreen lang={lang} openAI={() => setAiOpen(true)} />}
-              {route === 'analytics' && <AnalyticsScreen lang={lang} />}
+              {route === 'analytics' && <AnalyticsScreen lang={lang} user={user} />}
             </div>
           </div>
         </div>
@@ -374,10 +375,53 @@ function App() {
 }
 
 // Lightweight analytics screen
-function AnalyticsScreen({ lang }) {
+function AnalyticsScreen({ lang, user }) {
   const T = STR[lang];
+  const [stats, setStats] = useState(null);
+  const [topClips, setTopClips] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      if (!Supa.client || !user) {
+        setStats(STATS);
+        setTopClips([...CLIPS].sort((a,b) => b.score - a.score).slice(0,5));
+        setLoading(false);
+        return;
+      }
+      const [clipsRes, publishedRes, projectsRes] = await Promise.all([
+        Supa.client.from('clips').select('id, score, title, niche, views_count')
+          .eq('user_id', user.id).order('score', { ascending: false }),
+        Supa.client.from('schedule').select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id).eq('status', 'published'),
+        Supa.client.from('projects').select('duration')
+          .eq('user_id', user.id)
+      ]);
+
+      const clips = clipsRes.data || [];
+      const publishedCount = publishedRes.count || 0;
+      const totalViews = clips.reduce((s, c) => s + (c.views_count || 0), 0);
+      const totalDuration = (projectsRes.data || []).reduce((s,p) => s + (p.duration || 0), 0);
+      const hoursSaved = Math.round((totalDuration / 3600) * 0.7);
+
+      setStats([
+        { key: 'views',  label: { pt: 'Visualizações', en: 'Views' },
+          num: totalViews > 999 ? (totalViews/1000).toFixed(1)+'k' : String(totalViews),
+          delta: '', dir: 'up', icon: 'eye' },
+        { key: 'clips',  label: { pt: 'Cortes criados', en: 'Clips made' },
+          num: String(clips.length), delta: '', dir: 'up', icon: 'scissors' },
+        { key: 'posted', label: { pt: 'Publicados', en: 'Published' },
+          num: String(publishedCount), delta: '', dir: 'up', icon: 'send' },
+        { key: 'time',   label: { pt: 'Horas economizadas', en: 'Hours saved' },
+          num: hoursSaved+'h', delta: '', dir: 'up', icon: 'clock' },
+      ]);
+      setTopClips(clips.slice(0,5));
+      setLoading(false);
+    }
+    load();
+  }, [user]);
+
   const bars = [42, 58, 35, 71, 64, 88, 96, 74, 82, 60, 91, 78];
-  const top = [...CLIPS].sort((a, b) => b.score - a.score).slice(0, 5);
   return (
     <div className="page page-wide">
       <div className="section-head fade-up">
@@ -388,13 +432,19 @@ function AnalyticsScreen({ lang }) {
         </div>
       </div>
       <div className="stat-row stagger" style={{ marginBottom: 24 }}>
-        {STATS.map(s => (
-          <div key={s.key} className="stat">
-            <div className="label"><Icon name={s.icon} size={15} />{s.label[lang]}</div>
-            <div className="num">{s.num}</div>
-            <div className={`delta ${s.dir}`}>↑ {s.delta}</div>
-          </div>
-        ))}
+        {loading ? (
+          [1,2,3,4].map(i => (
+            <div key={i} className="stat" style={{ background: 'var(--surface-3)', height: 80, borderRadius: 'var(--r-lg)', animation: 'pulse 1.5s infinite' }} />
+          ))
+        ) : (
+          stats.map(s => (
+            <div key={s.key} className="stat">
+              <div className="label"><Icon name={s.icon} size={15} />{s.label[lang] || s.label}</div>
+              <div className="num">{s.num}</div>
+              <div className={`delta ${s.dir}`}>↑ {s.delta}</div>
+            </div>
+          ))
+        )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 22, alignItems: 'start' }}>
         <div className="card" style={{ padding: 20 }}>
@@ -407,13 +457,15 @@ function AnalyticsScreen({ lang }) {
         </div>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <h3 className="h3" style={{ padding: '16px 16px 12px' }}>{lang === 'en' ? 'Top clips' : 'Melhores cortes'}</h3>
-          {top.map((c, i) => (
+          {loading ? (
+            <div style={{ padding: 20 }}>Carregando...</div>
+          ) : topClips.map((c, i) => (
             <div key={c.id} className="queue-item">
               <span className="mono" style={{ fontSize: 13, color: 'var(--muted)', width: 16 }}>{i + 1}</span>
               <Thumb niche={c.niche} className="qthumb" label={false} />
               <div className="grow" style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title}</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{(c.score * 1.2).toFixed(0)}k {lang === 'en' ? 'views' : 'views'}</div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{c.views_count ? c.views_count : (c.score * 1.2).toFixed(0)+'k'} {lang === 'en' ? 'views' : 'views'}</div>
               </div>
               <Score value={c.score} size={34} showCap={false} />
             </div>

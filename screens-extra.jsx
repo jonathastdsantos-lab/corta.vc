@@ -2,7 +2,7 @@
    SCREENS — Templates · Schedule
    ============================================================ */
 
-function CommunityTemplates({ lang }) {
+function CommunityTemplates({ lang, openClip }) {
   const en = lang === 'en';
   return (
     <div className="tpl-grid stagger">
@@ -11,7 +11,7 @@ function CommunityTemplates({ lang }) {
         { name: 'Gameplay Rápida', author: '@alanzoka', uses: '8.5k', style: 'netflix' },
         { name: 'Pregação Emocionante', author: '@deiveleonardo', uses: '15k', style: 'dev' },
       ].map((t, i) => (
-        <div key={i} className="tpl-card">
+        <div key={i} className="tpl-card" onClick={() => openClip && openClip(CLIPS[0])}>
           <div className="tpl-preview" style={{ background: 'var(--surface-3)', aspectRatio: '16/11' }}>
             <div style={{ position: 'relative', zIndex: 2, padding: '0 14px', textAlign: 'center' }}>
               <CaptionText text={en ? 'Community' : 'Comunidade'} style={CAPTION_STYLES.find(s=>s.id===t.style)} fontSize={20} />
@@ -123,7 +123,7 @@ function TemplatesScreen({ lang, openClip }) {
         </div>
       )}
 
-      {tab === 'community' && <CommunityTemplates lang={lang} />}
+      {tab === 'community' && <CommunityTemplates lang={lang} openClip={openClip} />}
 
       {tab === 'formats' && (
         <div className="proj-grid stagger" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
