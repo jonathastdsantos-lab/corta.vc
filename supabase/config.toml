@@ -1,0 +1,8 @@
+# Project: Corta.vc — corresponde ao projeto remoto shzjchiortfrnpsoirrb
+project_id = "corta-vc"
+
+[db]
+major_version = 15
+
+[storage]
+enabled = true
