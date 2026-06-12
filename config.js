@@ -8,5 +8,5 @@
    ============================================================ */
 window.CORTA_CONFIG = {
   SUPABASE_URL: "https://shzjchiortfrnpsoirrb.supabase.co",
-  SUPABASE_ANON_KEY: "COLE_AQUI_SUA_ANON_KEY_NOVA",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNoempjaGlvcnRmcm5wc29pcnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMTkwNDgsImV4cCI6MjA5Njc5NTA0OH0.tUNV3qau_VIqqMPig4Ng6HhSql9GV47zzYTwYaXL0oQ",
 };
