@@ -119,18 +119,27 @@ alter table public.templates enable row level security;
 alter table public.schedule  enable row level security;
 
 -- profiles
+drop policy if exists "own profile - select" on public.profiles;
 create policy "own profile - select" on public.profiles for select using (auth.uid() = id);
+drop policy if exists "own profile - update" on public.profiles;
 create policy "own profile - update" on public.profiles for update using (auth.uid() = id);
 
 -- helper macro: políticas padrão "dono da linha"
+drop policy if exists "projects owner" on public.projects;
 create policy "projects owner"  on public.projects  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "clips owner" on public.clips;
 create policy "clips owner"     on public.clips     for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "schedule owner" on public.schedule;
 create policy "schedule owner"  on public.schedule  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- templates: lê os globais (user_id null) + os próprios; só edita os próprios
+drop policy if exists "templates read" on public.templates;
 create policy "templates read"   on public.templates for select using (user_id is null or auth.uid() = user_id);
+drop policy if exists "templates write" on public.templates;
 create policy "templates write"  on public.templates for insert with check (auth.uid() = user_id);
+drop policy if exists "templates update" on public.templates;
 create policy "templates update" on public.templates for update using (auth.uid() = user_id);
+drop policy if exists "templates delete" on public.templates;
 create policy "templates delete" on public.templates for delete using (auth.uid() = user_id);
 
 -- ============================================================
@@ -140,10 +149,12 @@ insert into storage.buckets (id, name, public) values ('videos', 'videos', false
 insert into storage.buckets (id, name, public) values ('clips',  'clips',  false) on conflict do nothing;
 
 -- usuário só acessa arquivos dentro da pasta com o próprio uid (ex: videos/<uid>/arquivo.mp4)
+drop policy if exists "videos owner" on storage.objects;
 create policy "videos owner" on storage.objects for all
   using (bucket_id = 'videos' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'videos' and (storage.foldername(name))[1] = auth.uid()::text);
 
+drop policy if exists "clips owner" on storage.objects;
 create policy "clips owner" on storage.objects for all
   using (bucket_id = 'clips' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'clips' and (storage.foldername(name))[1] = auth.uid()::text);

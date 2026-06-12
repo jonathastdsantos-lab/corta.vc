@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS public.social_connections (
 );
 CREATE INDEX IF NOT EXISTS social_conn_user_idx ON public.social_connections(user_id);
 ALTER TABLE public.social_connections ENABLE ROW LEVEL SECURITY;
+drop policy if exists "social owner" on public.social_connections;
 CREATE POLICY "social owner" ON public.social_connections FOR ALL
   USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS public.payments (
 );
 CREATE INDEX IF NOT EXISTS payments_user_idx ON public.payments(user_id, created_at DESC);
 ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+drop policy if exists "payments owner" on public.payments;
 CREATE POLICY "payments owner" ON public.payments FOR SELECT USING (auth.uid() = user_id);
 
 -- ============================================================
