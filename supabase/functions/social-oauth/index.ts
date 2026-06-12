@@ -27,6 +27,25 @@ const OAUTH_CONFIG: Record<string, any> = {
     profileUrl: 'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
     clientIdKey: 'YOUTUBE_CLIENT_ID',
     clientSecretKey: 'YOUTUBE_CLIENT_SECRET'
+  },
+  facebook: {
+    tokenUrl: 'https://graph.facebook.com/v18.0/oauth/access_token',
+    profileUrl: 'https://graph.facebook.com/me?fields=id,name,picture',
+    clientIdKey: 'FACEBOOK_APP_ID',
+    clientSecretKey: 'FACEBOOK_APP_SECRET'
+  },
+  linkedin: {
+    tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
+    profileUrl: 'https://api.linkedin.com/v2/me',
+    clientIdKey: 'LINKEDIN_CLIENT_ID',
+    clientSecretKey: 'LINKEDIN_CLIENT_SECRET'
+  },
+  kwai: {
+    // Kwai Open Platform
+    tokenUrl: 'https://open.kwai.com/oauth2/connect/token',
+    profileUrl: 'https://open.kwai.com/v1/user/info',
+    clientIdKey: 'KWAI_APP_ID',
+    clientSecretKey: 'KWAI_APP_SECRET'
   }
 };
 
@@ -42,6 +61,22 @@ serve(async (req) => {
   );
 
   try {
+    // GET: listar conexões do usuário
+    if (req.method === 'GET' && !action) {
+      const authHeader = req.headers.get('Authorization') ?? '';
+      const { data: { user } } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
+      if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+      const { data: connections } = await supabase
+        .from('social_connections')
+        .select('platform, profile_name, profile_pic, token_expires_at, updated_at')
+        .eq('user_id', user.id);
+
+      return new Response(JSON.stringify({ connections: connections || [] }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     // INIT: gerar URL de autorização
     if (action === 'init' || req.method === 'POST') {
       const body = req.method === 'POST' ? await req.json() : {};
@@ -66,7 +101,19 @@ serve(async (req) => {
         authUrl = `https://api.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user_profile,user_media&response_type=code&state=${state}`;
       } else if (platform === 'youtube') {
         authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=https://www.googleapis.com/auth/youtube.upload+https://www.googleapis.com/auth/youtube.readonly&state=${state}&access_type=offline`;
+      } else if (platform === 'facebook') {
+        authUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=pages_show_list,pages_read_engagement,pages_manage_posts,video_upload&state=${state}&response_type=code`;
+      } else if (platform === 'linkedin') {
+        authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=openid profile w_member_social&state=${state}`;
+      } else if (platform === 'kwai') {
+        authUrl = `https://open.kwai.com/oauth2/connect/authorize?app_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user_info,video_upload&response_type=code&state=${state}`;
       }
+
+      // Salva state temporário no banco (expira em 10 minutos)
+      await supabase.from('oauth_states').insert({
+        state, user_id: userId, platform,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      }).catch(() => {}); // falha silenciosa — não bloqueia o fluxo
 
       return new Response(JSON.stringify({ auth_url: authUrl, state }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -85,7 +132,24 @@ serve(async (req) => {
 
       if (!code || !state) throw new Error('Parâmetros ausentes no callback');
 
-      const [platform, userId] = state.split('_');
+      // Valida que o state existe e não expirou
+      const { data: stateRow } = await supabase
+        .from('oauth_states')
+        .select('user_id, platform')
+        .eq('state', state)
+        .gt('expires_at', new Date().toISOString())
+        .single();
+
+      if (!stateRow) {
+        return Response.redirect(`${APP_URL}/index.html?social=error&reason=invalid_state`, 302);
+      }
+
+      // Usa userId validado do banco (não do state string)
+      const userId = stateRow.user_id;
+      const platform = stateRow.platform;
+
+      // Deleta o state após uso (one-time use)
+      await supabase.from('oauth_states').delete().eq('state', state);
       const cfg = OAUTH_CONFIG[platform];
       if (!cfg) throw new Error(`Plataforma inválida no state: ${platform}`);
 
@@ -122,6 +186,29 @@ serve(async (req) => {
           })
         });
         tokenData = await res.json();
+      } else if (platform === 'facebook') {
+        const res = await fetch(`${cfg.tokenUrl}?client_id=${clientId}&client_secret=${clientSecret}&redirect_uri=${encodeURIComponent(redirectUri)}&code=${code}`);
+        tokenData = await res.json();
+      } else if (platform === 'linkedin') {
+        const res = await fetch(cfg.tokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code', code,
+            redirect_uri: redirectUri, client_id: clientId, client_secret: clientSecret
+          })
+        });
+        tokenData = await res.json();
+      } else if (platform === 'kwai') {
+        const res = await fetch(cfg.tokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            app_id: clientId, app_secret: clientSecret,
+            code, grant_type: 'authorization_code', redirect_uri: redirectUri
+          })
+        });
+        tokenData = await res.json();
       }
 
       if (tokenData.error) throw new Error(`Token error: ${tokenData.error_description ?? tokenData.error}`);
@@ -150,6 +237,17 @@ serve(async (req) => {
           profileName = profileData.items?.[0]?.snippet?.title ?? platform;
           profileId = profileData.items?.[0]?.id ?? '';
           profilePic = profileData.items?.[0]?.snippet?.thumbnails?.default?.url ?? '';
+        } else if (platform === 'facebook') {
+          profileName = profileData.name ?? platform;
+          profileId = profileData.id ?? '';
+          profilePic = profileData.picture?.data?.url ?? '';
+        } else if (platform === 'linkedin') {
+          profileName = `${profileData.localizedFirstName ?? ''} ${profileData.localizedLastName ?? ''}`.trim() || platform;
+          profileId = profileData.id ?? '';
+        } else if (platform === 'kwai') {
+          profileName = profileData.data?.user?.user_name ?? platform;
+          profileId = profileData.data?.user?.user_id ?? '';
+          profilePic = profileData.data?.user?.head_url ?? '';
         }
       } catch (e) { console.warn('Falha ao buscar perfil:', e); }
 

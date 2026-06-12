@@ -82,6 +82,23 @@ serve(async (req) => {
           throw new Error(`Download falhou: ${dlErr?.message}`);
         }
 
+        // Limites de upload por plataforma (tamanho em bytes)
+        const PLATFORM_LIMITS: Record<string, { maxSize: number; maxDuration: number; name: string }> = {
+          tiktok:    { maxSize: 4  * 1024 * 1024 * 1024, maxDuration: 600, name: 'TikTok' },    // 4GB, 10min
+          instagram: { maxSize: 4  * 1024 * 1024 * 1024, maxDuration: 90,  name: 'Instagram' }, // 4GB, 90s
+          youtube:   { maxSize: 128* 1024 * 1024 * 1024, maxDuration: 3600,name: 'YouTube' },   // 128GB, 60min
+          facebook:  { maxSize: 10 * 1024 * 1024 * 1024, maxDuration: 7200,name: 'Facebook' },  // 10GB, 2h
+          linkedin:  { maxSize: 5  * 1024 * 1024 * 1024, maxDuration: 600, name: 'LinkedIn' },  // 5GB, 10min
+          kwai:      { maxSize: 2  * 1024 * 1024 * 1024, maxDuration: 180, name: 'Kwai' },      // 2GB, 3min
+        };
+
+        const limit = PLATFORM_LIMITS[schedule.platform];
+        if (limit) {
+          if (videoBlob.size > limit.maxSize) {
+            throw new Error(`Arquivo muito grande para ${limit.name}: ${(videoBlob.size / 1024 / 1024).toFixed(0)}MB. Máximo: ${limit.maxSize / 1024 / 1024 / 1024}GB`);
+          }
+        }
+
         const videoBuffer = await videoBlob.arrayBuffer();
         const caption = buildCaption(clip.caption, clip.hashtags, schedule.platform);
         let externalUrl = '';
@@ -94,6 +111,13 @@ serve(async (req) => {
         } else if (schedule.platform === 'youtube') {
           const title = clip.title ?? clip.caption?.replace(/\{|\}/g, '') ?? 'Corte';
           externalUrl = await postToYouTube(social.access_token, videoBuffer, title, caption);
+        } else if (schedule.platform === 'facebook') {
+          externalUrl = await postToFacebook(social.access_token, social.profile_id, videoBuffer, caption);
+        } else if (schedule.platform === 'linkedin') {
+          const title = clip.title ?? 'Corte';
+          externalUrl = await postToLinkedIn(social.access_token, social.profile_id, videoBuffer, caption, title);
+        } else if (schedule.platform === 'kwai') {
+          externalUrl = await postToKwai(social.access_token, videoBuffer, caption);
         } else {
           // Outras plataformas ainda não implementadas
           throw new Error(`Plataforma ${schedule.platform} ainda não suportada para autopost`);
@@ -239,4 +263,127 @@ async function postToYouTube(token: string, video: ArrayBuffer, title: string, d
   if (!uploaded.id) throw new Error(`YouTube upload error: ${JSON.stringify(uploaded)}`);
 
   return `https://youtube.com/shorts/${uploaded.id}`;
+}
+
+async function postToFacebook(token: string, pageId: string, video: ArrayBuffer, caption: string): Promise<string> {
+  // Facebook Graph API — requer Page Access Token e page_id
+  // O token do usuário precisa ser trocado por Page Access Token
+  const pageTokenRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?access_token=${token}`);
+  const pages = await pageTokenRes.json();
+  const page = pages.data?.[0];
+  if (!page) throw new Error('Nenhuma página do Facebook encontrada. Conecte uma página.');
+
+  const pageToken = page.access_token;
+  const pid = page.id;
+
+  // Inicia upload de vídeo
+  const initRes = await fetch(`https://graph.facebook.com/v18.0/${pid}/videos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      upload_phase: 'start',
+      file_size: video.byteLength,
+      access_token: pageToken
+    })
+  });
+  const init = await initRes.json();
+  if (!init.upload_session_id) throw new Error(`Facebook video init falhou: ${JSON.stringify(init)}`);
+
+  // Upload do vídeo
+  const formData = new FormData();
+  formData.append('upload_phase', 'transfer');
+  formData.append('start_offset', '0');
+  formData.append('upload_session_id', init.upload_session_id);
+  formData.append('access_token', pageToken);
+  formData.append('video_file_chunk', new Blob([video], { type: 'video/mp4' }));
+  await fetch(`https://graph.facebook.com/v18.0/${pid}/videos`, { method: 'POST', body: formData });
+
+  // Finaliza upload com legenda
+  const finishRes = await fetch(`https://graph.facebook.com/v18.0/${pid}/videos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      upload_phase: 'finish',
+      upload_session_id: init.upload_session_id,
+      description: caption,
+      published: true,
+      access_token: pageToken
+    })
+  });
+  const finish = await finishRes.json();
+  if (!finish.id) throw new Error(`Facebook finish falhou: ${JSON.stringify(finish)}`);
+  return `https://facebook.com/watch/?v=${finish.id}`;
+}
+
+async function postToLinkedIn(token: string, profileId: string, video: ArrayBuffer, caption: string, title: string): Promise<string> {
+  const personUrn = `urn:li:person:${profileId}`;
+
+  // 1. Registrar upload
+  const registerRes = await fetch('https://api.linkedin.com/v2/assets?action=registerUpload', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      registerUploadRequest: {
+        recipes: ['urn:li:digitalmediaRecipe:feedshare-video'],
+        owner: personUrn,
+        serviceRelationships: [{
+          relationshipType: 'OWNER',
+          identifier: 'urn:li:userGeneratedContent'
+        }]
+      }
+    })
+  });
+  const register = await registerRes.json();
+  const uploadUrl = register.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl;
+  const asset = register.value?.asset;
+  if (!uploadUrl || !asset) throw new Error(`LinkedIn register falhou: ${JSON.stringify(register)}`);
+
+  // 2. Upload do vídeo
+  await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'video/mp4', 'Authorization': `Bearer ${token}` },
+    body: video
+  });
+
+  // 3. Criar post
+  const postRes = await fetch('https://api.linkedin.com/v2/ugcPosts', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      author: personUrn,
+      lifecycleState: 'PUBLISHED',
+      specificContent: {
+        'com.linkedin.ugc.ShareContent': {
+          shareCommentary: { text: caption },
+          shareMediaCategory: 'VIDEO',
+          media: [{
+            status: 'READY',
+            description: { text: caption },
+            media: asset,
+            title: { text: title.slice(0, 200) }
+          }]
+        }
+      },
+      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+    })
+  });
+  const post = await postRes.json();
+  if (!post.id) throw new Error(`LinkedIn post falhou: ${JSON.stringify(post)}`);
+  return `https://linkedin.com/feed/update/${post.id}`;
+}
+
+async function postToKwai(token: string, video: ArrayBuffer, caption: string): Promise<string> {
+  // Kwai Open Platform API
+  const formData = new FormData();
+  formData.append('access_token', token);
+  formData.append('caption', caption.slice(0, 200));
+  formData.append('video', new Blob([video], { type: 'video/mp4' }), 'clip.mp4');
+
+  const res = await fetch('https://open.kwai.com/v1/media/video/publish', {
+    method: 'POST',
+    body: formData
+  });
+  const data = await res.json();
+  if (!data.result?.photo_id) throw new Error(`Kwai publish falhou: ${JSON.stringify(data)}`);
+  return `https://kwai.com/p/${data.result.photo_id}`;
 }

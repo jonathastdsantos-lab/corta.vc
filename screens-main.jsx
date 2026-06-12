@@ -106,14 +106,34 @@ function Dashboard({ lang, go, openAI, user }) {
       <div className="proj-grid stagger">
         {loading ? (
           [1,2,3].map(i => (
-            <div key={i} className="proj-card" style={{height: 200, background: 'var(--surface-3)', animation: 'pulse 1.5s infinite'}} />
+            <div key={i} className="proj-card skeleton-card">
+              <div className="thumb skeleton" style={{ borderRadius: 0 }} />
+              <div className="body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="skeleton skeleton-text" style={{ height: 16, width: '85%' }} />
+                <div className="skeleton skeleton-text" style={{ height: 16, width: '50%' }} />
+              </div>
+            </div>
           ))
         ) : projects.length === 0 ? (
-          <div className="empty-state" style={{gridColumn: '1 / -1', padding: 40, textAlign: 'center', background: 'var(--surface-2)', borderRadius: 12}}>
-            <div style={{marginBottom: 12}}><Icon name="film" size={32} /></div>
-            <h3>{lang === 'en' ? 'No projects yet' : 'Nenhum projeto ainda'}</h3>
-            <p className="sub" style={{marginBottom: 16}}>{lang === 'en' ? 'Import your first video to start clipping.' : 'Importe seu primeiro vídeo para começar a cortar.'}</p>
-            <Btn variant="primary" onClick={() => go('import')}>{lang === 'en' ? 'Import video' : 'Importar vídeo'}</Btn>
+          <div className="empty-hero" style={{ gridColumn: '1 / -1' }}>
+            <div className="empty-phone-wrap">
+              <Icon name="sparkles" className="empty-particle" style={{ top: -10, right: -10, color: '#facc15' }} />
+              <Icon name="zap" className="empty-particle" style={{ bottom: 20, left: -20, color: '#a78bfa', animationDelay: '1.5s' }} />
+              <div className="empty-phone">
+                <div className="empty-phone-screen">
+                  <div className="empty-phone-bar" style={{ width: '40%', marginBottom: 16 }} />
+                  <div className="empty-phone-bar" style={{ width: '80%', marginBottom: 8 }} />
+                  <div className="empty-phone-bar" style={{ width: '60%' }} />
+                  <Icon name="scissors" className="empty-phone-scissors" />
+                  <div className="empty-phone-bar" style={{ marginTop: 'auto' }} />
+                </div>
+              </div>
+            </div>
+            <h3 className="h2" style={{ marginBottom: 8 }}>{lang === 'en' ? 'No projects yet' : 'Nenhum projeto ainda'}</h3>
+            <p className="sub" style={{ marginBottom: 24, maxWidth: 320 }}>
+              {lang === 'en' ? 'Import your first video to start clipping automatically.' : 'Importe seu primeiro vídeo e deixe a IA extrair os melhores cortes.'}
+            </p>
+            <Btn variant="primary" size="lg" icon="plus" onClick={() => go('import')}>{lang === 'en' ? 'Import video' : 'Importar vídeo'}</Btn>
           </div>
         ) : projects.map(p => (
           <button key={p.id} className="proj-card" onClick={() => go('clips', { project: p })}>
@@ -389,6 +409,15 @@ function ClipsScreen({ lang, go, project, openClip }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [sort, setSort] = useState('score');
   const [nicheFilter, setNicheFilter] = useState('all');
+  const [selected, setSelected] = useState(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+
+  function toggleSelect(id) {
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelected(next);
+  }
+  function clearSelection() { setSelected(new Set()); }
 
   useEffect(() => {
     async function load() {
@@ -419,7 +448,7 @@ function ClipsScreen({ lang, go, project, openClip }) {
 
   async function dl(clip, e) {
     e.stopPropagation();
-    if (!Supa.client) { alert('Modo demo'); return; }
+    if (!Supa.client) { window.showToast('Funcionalidade indisponível no modo demo', 'info'); return; }
     try {
       e.target.innerText = '...';
       const { data } = await Supa.client.storage.from('clips').download(clip.storage_path);
@@ -429,7 +458,8 @@ function ClipsScreen({ lang, go, project, openClip }) {
       a.download = `corta-vc-${clip.title.replace(/\W+/g, '-')}.mp4`;
       a.click();
       e.target.innerText = lang === 'en' ? 'Download' : 'Baixar';
-    } catch(err) { alert('Erro no download'); }
+      window.showToast('Download concluído', 'success');
+    } catch(err) { window.showToast('Erro ao baixar vídeo', 'error'); }
   }
 
   return (
@@ -464,26 +494,58 @@ function ClipsScreen({ lang, go, project, openClip }) {
 
       <div className="clips-grid stagger">
         {loading ? (
-          <div style={{padding: 20}}>Carregando cortes...</div>
+          [1,2,3,4].map(i => (
+            <div key={i} className="clip-card skeleton-card">
+              <div className="thumb skeleton" style={{ borderRadius: 0 }} />
+              <div className="clip-card-body-skeleton" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="skeleton skeleton-text" style={{ height: 14, width: '90%' }} />
+                <div className="skeleton skeleton-text" style={{ height: 14, width: '60%' }} />
+                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  <div className="skeleton skeleton-text" style={{ height: 28, width: 60, borderRadius: 6 }} />
+                  <div className="skeleton skeleton-text" style={{ height: 28, width: 28, borderRadius: 6, marginLeft: 'auto' }} />
+                </div>
+              </div>
+            </div>
+          ))
         ) : filtered.map(c => (
-          <div key={c.id} className="clip-card fade-up">
-            <div className="clip-top" onClick={() => c.storage_path && setPreviewUrl(Supa.client.storage.from('clips').getPublicUrl(c.storage_path).data.publicUrl)}>
+          <div key={c.id} className={`clip-card fade-up ${selected.has(c.id) ? 'clip-selected' : ''}`}
+            onClick={(e) => {
+              if (selected.size > 0) { e.preventDefault(); toggleSelect(c.id); }
+            }}>
+            
+            <button className="clip-checkbox" onClick={(e) => { e.stopPropagation(); toggleSelect(c.id); }}>
+              {selected.has(c.id) 
+                ? <div style={{width:22, height:22, borderRadius:'50%', background:'var(--accent)', color:'#fff', display:'grid', placeItems:'center'}}><Icon name="check" size={14}/></div>
+                : <div className="clip-checkbox-empty" />}
+            </button>
+
+            <div className="clip-top" onClick={() => {
+              if (selected.size > 0) { toggleSelect(c.id); return; }
+              if (c.storage_path) setPreviewUrl(Supa.client.storage.from('clips').getPublicUrl(c.storage_path).data.publicUrl);
+            }}>
               {c.thumbnail_url ? (
                 <img src={c.thumbnail_url} alt="thumb" style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block'}} />
               ) : (
-                <Thumb niche={c.niche} ratio={c.ratio || '9:16'} dur={c.duration} />
+                <Thumb niche={c.niche} ratio={c.ratio || '9:16'} dur={c.duration} reelChrome={true} />
               )}
               <div className="badge-tl" style={{ background: c.score >= 80 ? 'var(--good)' : 'rgba(0,0,0,.6)' }}>
-                {c.score} <Icon name="zap" size={12} fill="current" />
+                <Score value={c.score} size={18} showCap={false} /> <span style={{marginLeft: 4}}>{c.score}</span>
               </div>
               <div className="clip-acts">
                 <IconBtn name="play" variant="primary" style={{ borderRadius: 99 }} />
               </div>
             </div>
+            
             <div className="body">
               <div className="title" style={{ fontSize: 13 }}>{c.title}</div>
+              
+              <div className="row" style={{ marginTop: 6, gap: 12, fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                {c.views_count >= 0 && <span className="row" style={{gap:4}}><Icon name="eye" size={12}/>{c.views_count}</span>}
+                {c.likes_count >= 0 && <span className="row" style={{gap:4}}><Icon name="heart" size={12}/>{c.likes_count}</span>}
+              </div>
+
               <div className="meta" style={{ marginTop: 8 }}>
-                <Btn size="sm" variant="ghost" onClick={() => openClip ? openClip(c) : go('editor', { project, clip: c })}>{T.edit}</Btn>
+                <Btn size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openClip ? openClip(c) : go('editor', { project, clip: c }); }}>{T.edit}</Btn>
                 <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
                   <Btn size="sm" variant="ghost" icon="send" onClick={e => { e.stopPropagation(); go('schedule'); }}>{lang === 'en' ? 'Post' : 'Postar'}</Btn>
                   <Btn size="sm" variant="primary" icon="download" onClick={(e) => dl(c, e)}>{T.dl}</Btn>
@@ -494,12 +556,35 @@ function ClipsScreen({ lang, go, project, openClip }) {
         ))}
       </div>
       
-      {previewUrl && (
-        <div style={{position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'grid', placeItems: 'center', zIndex: 9999}}>
-          <div style={{position: 'absolute', top: 20, right: 20}}>
-            <IconBtn name="close" size={32} onClick={() => setPreviewUrl(null)} />
+      {selected.size > 0 && (
+        <div className="bulk-bar fade-up">
+          <span className="bulk-count">{selected.size} selecionado{selected.size > 1 ? 's' : ''}</span>
+          <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,.2)', margin: '0 4px' }} />
+          <div className="bulk-actions">
+            <Btn size="sm" icon="send" onClick={() => window.showToast(`${selected.size} cortes enviados p/ agenda`, 'success')}>Agendar</Btn>
+            <Btn size="sm" icon="download" onClick={() => window.showToast(`Baixando ${selected.size} cortes`, 'success')}>Baixar</Btn>
+            <Btn size="sm" icon="trash" onClick={() => {
+              if (confirm('Excluir selecionados?')) {
+                setClips(prev => prev.filter(c => !selected.has(c.id)));
+                clearSelection();
+                window.showToast('Cortes excluídos', 'success', () => alert('Desfeito!'));
+              }
+            }}>Excluir</Btn>
           </div>
-          <video src={previewUrl} controls autoPlay style={{maxWidth: '90%', maxHeight: '90%', borderRadius: 12}} />
+          <button className="bulk-close" onClick={clearSelection}><Icon name="close" size={16} /></button>
+        </div>
+      )}
+
+      {previewUrl && (
+        <div className="scrim show" style={{ zIndex: 9999, display: 'grid', placeItems: 'center' }} onClick={() => setPreviewUrl(null)}>
+          <div style={{ position: 'absolute', top: 20, right: 20 }}>
+            <IconBtn name="close" size={32} style={{ color: '#fff', background: 'rgba(0,0,0,.5)' }} onClick={() => setPreviewUrl(null)} />
+          </div>
+          <div className="fade-up" style={{ padding: 20, maxWidth: '100%', maxHeight: '100%', display: 'flex', justifyContent: 'center' }} onClick={e => e.stopPropagation()}>
+            <div className="phone" style={{ height: 'min(85vh, 800px)', boxShadow: '0 20px 60px rgba(0,0,0,.8)' }}>
+              <video src={previewUrl} controls autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
+          </div>
         </div>
       )}
     </div>

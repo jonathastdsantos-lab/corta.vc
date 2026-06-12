@@ -33,6 +33,24 @@ function wordsToSrt(words: Array<any>): string {
   return srt;
 }
 
+function buildSubtitleFilter(srtPath: string, style: string, isFree: boolean): string {
+  const watermark = isFree
+    ? `,drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
+    : '';
+
+  const STYLES: Record<string, string> = {
+    hormozi:  `FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Uppercase=1,Alignment=10`,
+    clean:    `FontName=Arial,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,Outline=0,Shadow=0,Alignment=2`,
+    karaoke:  `FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00E8543B,Outline=3,Shadow=1,Uppercase=1,Alignment=10`,
+    minimal:  `FontName=Arial,FontSize=22,Bold=0,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Alignment=2`,
+    neon:     `FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H005EF1FF,Outline=3,Shadow=2,Uppercase=1,Alignment=10`,
+    'bold-bar': `FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00111111,BackColour=&H00E8543B,BorderStyle=4,Outline=0,Uppercase=1,Alignment=2`,
+  };
+
+  const styleParams = STYLES[style] || STYLES['hormozi'];
+  return `subtitles=${srtPath}:force_style='${styleParams}'${watermark}`;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -42,6 +60,7 @@ serve(async (req) => {
   );
 
   let projectId: string | null = null;
+  let tmpDir: string | null = null;
 
   try {
     const { project_id, user_id } = await req.json();
@@ -61,7 +80,7 @@ serve(async (req) => {
       .from('profiles').select('credits, plan').eq('id', user_id).single();
     if (!profile) throw new Error('Perfil não encontrado');
 
-    const tmpDir = await Deno.makeTempDir();
+    tmpDir = await Deno.makeTempDir();
     const videoPath = path.join(tmpDir, 'input.mp4');
     let videoReady = false;
 
@@ -90,8 +109,50 @@ serve(async (req) => {
         const { code } = await ytCmd.output();
         if (code !== 0) throw new Error('Falha ao baixar vídeo do YouTube');
         videoReady = true;
+      } else if (project.source_url.includes('drive.google.com')) {
+        // Extrai file ID do link
+        const driveMatch = project.source_url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        const fileId = driveMatch?.[1];
+        if (!fileId) throw new Error('Não foi possível extrair o ID do arquivo do Google Drive');
+        
+        const driveApiKey = Deno.env.get('GOOGLE_API_KEY');
+        if (!driveApiKey) throw new Error('GOOGLE_API_KEY não configurado para Drive');
+        
+        const downloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`;
+        const driveRes = await fetch(downloadUrl);
+        if (!driveRes.ok) throw new Error(`Google Drive download falhou: ${driveRes.status}. O arquivo precisa ser público.`);
+        
+        Deno.writeFileSync(videoPath, new Uint8Array(await driveRes.arrayBuffer()));
+        videoReady = true;
+      } else if (project.source_url.includes('twitch.tv/videos/')) {
+        const vodMatch = project.source_url.match(/videos\/(\d+)/);
+        const vodId = vodMatch?.[1];
+        if (!vodId) throw new Error('ID do VOD Twitch não encontrado na URL');
+        
+        // yt-dlp suporta Twitch com a mesma sintaxe do YouTube
+        const twitchCmd = new Deno.Command('yt-dlp', {
+          args: [
+            '--no-playlist',
+            '--format', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+            '--merge-output-format', 'mp4',
+            '--output', videoPath,
+            project.source_url
+          ]
+        });
+        const { code: twitchCode } = await twitchCmd.output();
+        if (twitchCode !== 0) throw new Error('Falha ao baixar VOD do Twitch via yt-dlp');
+        videoReady = true;
+      } else if (project.source_url.includes('zoom.us/rec/') || project.source_url.includes('zoom.us/share/')) {
+        throw new Error('Gravações do Zoom precisam ser baixadas manualmente e enviadas via upload. Links do Zoom requerem autenticação.');
       } else {
-        throw new Error(`Fonte não suportada ainda: ${project.source_url}`);
+        // Fallback: tenta com yt-dlp que suporta 1000+ plataformas
+        console.log(`Tentando yt-dlp para URL: ${project.source_url}`);
+        const genericCmd = new Deno.Command('yt-dlp', {
+          args: ['--no-playlist', '--format', 'mp4/best', '--output', videoPath, project.source_url]
+        });
+        const { code: genericCode } = await genericCmd.output();
+        if (genericCode !== 0) throw new Error(`Fonte não suportada: ${project.source_url}`);
+        videoReady = true;
       }
     }
 
@@ -117,10 +178,36 @@ serve(async (req) => {
     // Salvar duração no projeto
     await supabase.from('projects').update({ duration_seconds: Math.round(durationSeconds) }).eq('id', project_id);
 
+    // Converte vídeo para o ratio solicitado (default 9:16 para mobile)
+    const targetRatio = project.ratio || '9:16';
+    const convertedPath = path.join(tmpDir, 'converted.mp4');
+
+    const [rW, rH] = targetRatio.split(':').map(Number);
+    let scaleFilter = '';
+    if (rW && rH) {
+      // Padding para manter aspect ratio sem cortar
+      // Para 9:16: scala para largura 1080, adiciona barras laterais se necessário
+      const targetW = rH > rW ? 1080 : 1920;
+      const targetH = rH > rW ? 1920 : 1080;
+      scaleFilter = `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black`;
+    }
+
+    if (scaleFilter) {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(videoPath)
+          .outputOptions([`-vf ${scaleFilter}`, '-c:a copy', '-movflags +faststart'])
+          .output(convertedPath)
+          .on('end', resolve)
+          .on('error', reject)
+          .run();
+      });
+    }
+    const sourceVideoPath = scaleFilter ? convertedPath : videoPath;
+
     // 5. Extrair áudio para Whisper
     const audioPath = path.join(tmpDir, 'audio.mp3');
     await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
+      ffmpeg(sourceVideoPath)
         .noVideo()
         .audioCodec('libmp3lame')
         .audioFrequency(16000)
@@ -211,17 +298,15 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
         const clipWords = words.filter((w: any) => w.start >= moment.start_s && w.end <= moment.end_s + 1);
         Deno.writeTextFileSync(srtPath, wordsToSrt(clipWords));
 
-        const watermark = isFree
-          ? `,drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
-          : '';
+        const watermark = isFree;
 
         // Render com legendas
         await new Promise((resolve, reject) => {
-          ffmpeg(videoPath)
+          ffmpeg(sourceVideoPath)
             .setStartTime(moment.start_s)
             .setDuration(moment.end_s - moment.start_s)
             .outputOptions([
-              `-vf subtitles=${srtPath}:force_style='FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1'${watermark}`,
+              `-vf ${buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree)}`,
               '-c:a aac', '-b:a 128k', '-movflags +faststart'
             ])
             .output(clipPath)
@@ -273,6 +358,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
           hook: moment.hook,
           storage_path: storagePath,
           thumbnail_url: thumbnailUrl,
+          caption_style: project.caption_style || 'hormozi',
           status: 'rendered'
         });
 
@@ -314,6 +400,11 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
       action_url: `/clips?project=${project_id}`
     });
 
+    if (tmpDir) {
+      try { await Deno.remove(tmpDir, { recursive: true }); }
+      catch (e) { console.warn('Falha ao limpar tmpDir:', e); }
+    }
+
     return new Response(
       JSON.stringify({ success: true, clips_count: successCount, credit_cost: creditCost }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -326,6 +417,11 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
         status: 'failed',
         error_message: err instanceof Error ? err.message : String(err)
       }).eq('id', projectId);
+    }
+    
+    if (tmpDir) {
+      try { await Deno.remove(tmpDir, { recursive: true }); }
+      catch (e) { console.warn('Falha ao limpar tmpDir:', e); }
     }
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),

@@ -114,8 +114,9 @@ function Avatar({ name = 'RA', size = 32, src, tint }) {
 }
 
 // Striped video placeholder
-function Thumb({ niche, ratio, label, score, dur, children, className = '', style }) {
+function Thumb({ niche, ratio, label, score, dur, children, className = '', style, reelChrome = false }) {
   const n = NICHES[niche];
+  const isVertical = !ratio || ratio === '9:16';
   return (
     <div className={`thumb ${className}`} style={{ '--thumb-tint': n ? n.tint : undefined, ...style }}>
       {label !== false && <span className="thumb-label">{label || (n ? n.label : 'vídeo')}{ratio ? ` · ${ratio}` : ''}</span>}
@@ -127,24 +128,94 @@ function Thumb({ niche, ratio, label, score, dur, children, className = '', styl
       )}
       <span className="play"><Icon name="play" fill="current" /></span>
       {children}
+      {(reelChrome || isVertical) && (
+        <div className="reel-chrome" aria-hidden="true">
+          {/* Barra de progresso no topo */}
+          <div className="reel-progress">
+            <div className="reel-progress-bar" />
+          </div>
+          {/* Coluna lateral direita: ❤️ 💬 ↗ */}
+          <div className="reel-actions">
+            <div className="reel-action">
+              <Icon name="heart" size={20} />
+              <span>24k</span>
+            </div>
+            <div className="reel-action">
+              <Icon name="message" size={20} />
+              <span>847</span>
+            </div>
+            <div className="reel-action">
+              <Icon name="send" size={20} />
+              <span>1.2k</span>
+            </div>
+            <div className="reel-action" style={{ marginTop: 8 }}>
+              <div className="reel-audio-disc" />
+            </div>
+          </div>
+          {/* Rodapé: @handle + legenda */}
+          <div className="reel-footer">
+            <div className="reel-handle">@{(niche || 'criador').replace('oes','')}</div>
+            <div className="reel-desc">{n ? n.label : 'Vídeo'} · Corta.vc ✂️</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // Virality score ring
-function Score({ value, size = 44, stroke = 4, showCap = true }) {
+function Score({ value, size = 44, stroke = 4, showCap = true, breakdown = null }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const col = scoreColor(value);
+  const [showPopover, setShowPopover] = useState(false);
+
+  // Breakdown padrão derivado do score se não fornecido explicitamente
+  const bd = breakdown || {
+    hook:     Math.min(10, Math.round(value / 10 + (value > 80 ? 1 : -1))),
+    rhythm:   Math.min(10, Math.round(value / 11 + (value > 70 ? 1 : 0))),
+    trend:    Math.min(10, Math.round(value / 12)),
+    emotion:  Math.min(10, Math.round(value / 10)),
+  };
+
+  const labels = { hook: 'Gancho', rhythm: 'Ritmo', trend: 'Tendência', emotion: 'Emoção' };
+
   return (
-    <div className="score" style={{ width: size, height: size }}>
+    <div className="score" style={{ width: size, height: size, position: 'relative' }}
+      onMouseEnter={() => setShowPopover(true)}
+      onMouseLeave={() => setShowPopover(false)}
+    >
       <svg width={size} height={size}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--surface-3)" strokeWidth={stroke} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth={stroke} strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={c - (value / 100) * c} style={{ transition: 'stroke-dashoffset 1s cubic-bezier(.2,.7,.2,1)' }} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--surface-3)" strokeWidth={stroke} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={col} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c - (value / 100) * c}
+          style={{ transition: 'stroke-dashoffset 1s cubic-bezier(.2,.7,.2,1)' }} />
       </svg>
-      <span className="score-num" style={{ color: col, fontSize: size * 0.3, top: showCap ? size * 0.22 : '50%', transform: showCap ? 'none' : 'translateY(-50%)' }}>{value}</span>
+      <span className="score-num" style={{
+        color: col, fontSize: size * 0.3,
+        top: showCap ? size * 0.22 : '50%',
+        transform: showCap ? 'none' : 'translateY(-50%)'
+      }}>{value}</span>
       {showCap && <span className="score-cap">VIRAL</span>}
+
+      {showPopover && (
+        <div className="score-popover" role="tooltip">
+          <div className="score-popover-title">Nota de viralização</div>
+          {Object.entries(bd).map(([key, val]) => (
+            <div key={key} className="score-popover-row">
+              <span className="score-popover-label">{labels[key] || key}</span>
+              <div className="score-popover-bar-track">
+                <div className="score-popover-bar" style={{
+                  width: `${val * 10}%`,
+                  background: val >= 8 ? 'var(--good)' : val >= 6 ? 'var(--warn)' : 'var(--hot)'
+                }} />
+              </div>
+              <span className="score-popover-val">{val}/10</span>
+            </div>
+          ))}
+          <div className="score-popover-footer">Calculado pela IA com base no conteúdo</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -192,5 +263,63 @@ function Empty({ icon = 'film', children }) {
   return <div className="empty"><Icon name={icon} size={40} /><div>{children}</div></div>;
 }
 
+// ---- Toast system ----
+let _toastId = 0;
+const _toastListeners = new Set();
+
+function showToast(message, { type = 'success', duration = 3500, undo } = {}) {
+  const id = ++_toastId;
+  const toast = { id, message, type, duration, undo };
+  _toastListeners.forEach(fn => fn({ action: 'add', toast }));
+  if (duration > 0) {
+    setTimeout(() => _toastListeners.forEach(fn => fn({ action: 'remove', id })), duration);
+  }
+  return id;
+}
+
+function ToastContainer() {
+  const [toasts, setToasts] = useState([]);
+
+  useEffect(() => {
+    function listener({ action, toast, id }) {
+      if (action === 'add') setToasts(prev => [...prev, toast]);
+      if (action === 'remove') setToasts(prev => prev.filter(t => t.id !== id));
+    }
+    _toastListeners.add(listener);
+    return () => _toastListeners.delete(listener);
+  }, []);
+
+  if (!toasts.length) return null;
+
+  return (
+    <div className="toast-container" role="status" aria-live="polite">
+      {toasts.map(t => (
+        <div key={t.id} className={`toast toast-${t.type}`}>
+          <span className="toast-icon">
+            {t.type === 'success' && <Icon name="checkCircle" size={16} />}
+            {t.type === 'error' && <Icon name="alert" size={16} />}
+            {t.type === 'info' && <Icon name="sparkles" size={16} />}
+          </span>
+          <span className="toast-msg">{t.message}</span>
+          {t.undo && (
+            <button className="toast-undo" onClick={() => {
+              t.undo();
+              _toastListeners.forEach(fn => fn({ action: 'remove', id: t.id }));
+            }}>
+              Desfazer
+            </button>
+          )}
+          <button className="toast-close" onClick={() =>
+            _toastListeners.forEach(fn => fn({ action: 'remove', id: t.id }))
+          } aria-label="Fechar">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 Object.assign(window, { Icon, Btn, IconBtn, Avatar, Thumb, Score, Switch, Seg, CaptionText, Empty,
+  showToast, ToastContainer,
   useState, useEffect, useRef, useMemo });

@@ -89,6 +89,7 @@ function App() {
   const T = STR[lang];
 
   const [route, setRoute] = useState('dashboard');
+  const [routeKey, setRouteKey] = useState(0);
   const [project, setProject] = useState(null);
   const [clip, setClip] = useState(null);
   const [aiOpen, setAiOpen] = useState(false);
@@ -210,6 +211,7 @@ function App() {
     if (params.project) setProject(params.project);
     if (r !== 'clips') { /* keep project for clips */ }
     setRoute(r);
+    setRouteKey(k => k + 1);
     document.querySelector('.scroll')?.scrollTo(0, 0);
   }
   function openClip(c) { setClip(c); setRoute('editor'); }
@@ -317,7 +319,7 @@ function App() {
               <Btn variant="ghost" icon="sparkles" onClick={() => setAiOpen(true)}>{T.ask_ai}</Btn>
             </div>
 
-            <div className="scroll">
+            <div className="scroll" key={routeKey}>
               {route === 'dashboard' && <Dashboard lang={lang} go={go} openAI={() => setAiOpen(true)} user={user} />}
               {route === 'import' && <ImportScreen lang={lang} go={go} user={user} />}
               {route === 'processing' && <ProcessingScreen lang={lang} go={go} />}
@@ -391,6 +393,7 @@ function App() {
           }}
         />
       )}
+      <ToastContainer />
     </React.Fragment>
   );
 }
