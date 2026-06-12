@@ -81,8 +81,8 @@ function AuthScreen({ lang, onAuth }) {
   return (
     <div className="auth">
       <div className="auth-brand">
-        <div className="auth-logo" style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
-          <img src="/logo.png" alt="Corta.vc" style={{ height: 48 }} />
+        <div className="auth-logo" style={{ display: 'flex', justifyContent: 'center', marginBottom: '40px' }}>
+          <img src="/logo.png" alt="Corta.vc" style={{ height: 160 }} />
         </div>
         <div className="auth-head">
           <h2>{en ? 'Your long videos, a hundred viral clips.' : 'Seus vídeos longos viram cem cortes virais.'}</h2>
