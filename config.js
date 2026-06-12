@@ -10,3 +10,22 @@ window.CORTA_CONFIG = {
   SUPABASE_URL: "https://shzjchiortfrnpsoirrb.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNoempjaGlvcnRmcm5wc29pcnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMTkwNDgsImV4cCI6MjA5Njc5NTA0OH0.tUNV3qau_VIqqMPig4Ng6HhSql9GV47zzYTwYaXL0oQ",
 };
+
+// ATENÇÃO DEV: NUNCA COLOQUE A ANON KEY REAL NESTE ARQUIVO EM PRODUÇÃO!
+// Use variáveis de ambiente (ex: Vercel) para injetar a chave,
+// ou mantenha um placeholder para testes.
+const _key = window.CORTA_CONFIG.SUPABASE_ANON_KEY || '';
+if (_key.length > 100 && !_key.includes('COLE_AQUI')) {
+  console.warn("ALERTA DE SEGURANÇA: Parecem ser credenciais reais. Não faça commit deste arquivo com chaves de produção!");
+}
+
+if (_key.length < 100 || !_key.includes('eyJ')) {
+  window.CORTA_CONFIG.INVALID_KEY = true;
+  console.warn("Corta.vc: SUPABASE_ANON_KEY inválida. Forçando modo demo.");
+  window.addEventListener('DOMContentLoaded', () => {
+    const banner = document.createElement('div');
+    banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#ea4335;color:#fff;text-align:center;padding:8px;font-size:13px;z-index:9999;font-family:sans-serif;font-weight:600;";
+    banner.innerText = "Modo Demo Forçado: Chave Supabase (ANON_KEY) inválida no config.js.";
+    document.body.prepend(banner);
+  });
+}

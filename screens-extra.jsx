@@ -119,8 +119,46 @@ function nicheIcon(k) {
   return { podcast: 'mic', games: 'gamepad', noticias: 'message', fe: 'star', financas: 'trend', educacao: 'brain', fitness: 'flame' }[k] || 'film';
 }
 
-function ScheduleScreen({ lang, openAI }) {
+function ScheduleScreen({ lang, openAI, user }) {
   const T = STR[lang];
+  const [schedule, setSchedule] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    async function load() {
+      if (!window.Supa?.client) {
+        setSchedule(window.SCHEDULE || []);
+        setLoading(false);
+        return;
+      }
+      const { data } = await window.Supa.client
+        .from('schedule')
+        .select('*, clips(*)')
+        .eq('user_id', user?.id || '')
+        .order('scheduled_at', { ascending: true });
+        
+      if (data) {
+        const mapped = data.map(d => {
+          const date = new Date(d.scheduled_at);
+          return {
+            id: d.id,
+            clip: d.clip_id,
+            clipData: d.clips,
+            plat: d.platform,
+            day: date.getDate(),
+            time: date.getHours() + ':00',
+            status: d.status
+          };
+        });
+        setSchedule(mapped);
+      } else {
+        setSchedule(window.SCHEDULE || []);
+      }
+      setLoading(false);
+    }
+    load();
+  }, [user]);
+
   const dows = lang === 'en' ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const monthName = lang === 'en' ? 'June 2026' : 'Junho 2026';
   // June 2026 starts on Monday (1st = Mon). Pad so 1 lands under Mon.
@@ -131,7 +169,7 @@ function ScheduleScreen({ lang, openAI }) {
   for (let d = 1; d <= days; d++) cells.push(d);
   while (cells.length % 7) cells.push(null);
   const evByDay = {};
-  SCHEDULE.forEach(e => { (evByDay[e.day] = evByDay[e.day] || []).push(e); });
+  schedule.forEach(e => { (evByDay[e.day] = evByDay[e.day] || []).push(e); });
   const today = 11;
 
   return (
@@ -163,7 +201,7 @@ function ScheduleScreen({ lang, openAI }) {
               <div key={i} className={`cal-cell ${d == null ? 'muted' : ''} ${d === today ? 'today' : ''}`}>
                 {d != null && <span className="cal-date">{d}</span>}
                 {(evByDay[d] || []).map((e, j) => {
-                  const clip = CLIPS.find(c => c.id === e.clip);
+                  const clip = e.clipData || window.CLIPS?.find(c => c.id === e.clip);
                   return (
                     <div key={j} className="cal-event" style={{ background: platColor(e.plat) }} title={clip?.title}>
                       <Icon plat={e.plat} size={11} />{e.time}
@@ -180,10 +218,10 @@ function ScheduleScreen({ lang, openAI }) {
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="row between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
               <h3 className="h3">{T.queue}</h3>
-              <span className="tag accent">{SCHEDULE.length} {T.posts_scheduled}</span>
+              <span className="tag accent">{schedule.length} {T.posts_scheduled}</span>
             </div>
-            {SCHEDULE.slice(0, 5).map((e, i) => {
-              const clip = CLIPS.find(c => c.id === e.clip);
+            {loading ? <div style={{padding: 16}}>Carregando...</div> : schedule.slice(0, 5).map((e, i) => {
+              const clip = e.clipData || window.CLIPS?.find(c => c.id === e.clip);
               return (
                 <div key={i} className="queue-item">
                   <Thumb niche={clip.niche} className="qthumb" label={false} />
@@ -220,4 +258,45 @@ function platColor(p) {
   return { tiktok: '#111', youtube: '#ff0033', instagram: '#d6249f', x: '#111', linkedin: '#0a66c2', facebook: '#1877f2', kwai: '#ff5000' }[p] || '#888';
 }
 
-Object.assign(window, { TemplatesScreen, ScheduleScreen, nicheIcon, platColor });
+function AnalyticsScreen({ lang, user }) {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    async function load() {
+      if (!window.Supa?.client) return;
+      const { count: clipsCount } = await window.Supa.client.from('clips').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
+      const { count: projectsCount } = await window.Supa.client.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
+      const { count: scheduleCount } = await window.Supa.client.from('schedule').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
+      setStats({ clips: clipsCount || 0, projects: projectsCount || 0, schedules: scheduleCount || 0 });
+    }
+    load();
+  }, [user]);
+
+  return (
+    <div className="page page-wide fade-up">
+      <div className="section-head fade-up">
+        <div>
+          <div className="h-eyebrow">Insights</div>
+          <h1 className="h1">{lang === 'en' ? 'Analytics' : 'Métricas'}</h1>
+          <p className="sub">{lang === 'en' ? 'Track your content performance' : 'Acompanhe o desempenho do seu conteúdo'}</p>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginTop: 24 }}>
+        <div className="card" style={{ padding: 24 }}>
+          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Total Projects' : 'Total de Projetos'}</div>
+          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.projects : '...'}</div>
+        </div>
+        <div className="card" style={{ padding: 24 }}>
+          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Clips Generated' : 'Cortes Gerados'}</div>
+          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.clips : '...'}</div>
+        </div>
+        <div className="card" style={{ padding: 24 }}>
+          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Posts Scheduled' : 'Agendamentos'}</div>
+          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.schedules : '...'}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { TemplatesScreen, ScheduleScreen, AnalyticsScreen, nicheIcon, platColor });

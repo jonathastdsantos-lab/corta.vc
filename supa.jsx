@@ -6,9 +6,10 @@
    ============================================================ */
 
 const CFG = window.CORTA_CONFIG || {};
-const _placeholder = !CFG.SUPABASE_ANON_KEY
+const _placeholder = CFG.INVALID_KEY || !CFG.SUPABASE_ANON_KEY
   || CFG.SUPABASE_ANON_KEY.startsWith('COLE')
-  || CFG.SUPABASE_ANON_KEY.length < 40;
+  || CFG.SUPABASE_ANON_KEY.length < 100
+  || !CFG.SUPABASE_ANON_KEY.includes('eyJ');
 const _lib = window.supabase && window.supabase.createClient ? window.supabase : null;
 const LIVE = !_placeholder && !!_lib;
 
@@ -31,38 +32,55 @@ const Supa = {
   mode: _client ? 'live' : 'demo',
   client: _client,
 
+  _translateErr(msg) {
+    if (!msg) return 'Erro desconhecido.';
+    const s = msg.toLowerCase();
+    if (s.includes('already registered')) return 'Este e-mail já está cadastrado.';
+    if (s.includes('invalid login credentials')) return 'E-mail ou senha incorretos.';
+    if (s.includes('password should be at least')) return 'A senha deve ter pelo menos 6 caracteres.';
+    if (s.includes('rate limit')) return 'Muitas tentativas. Tente novamente mais tarde.';
+    return 'Erro: ' + msg;
+  },
+
   async getUser() {
     if (this.client) {
       const { data } = await this.client.auth.getUser();
       if (!data?.user) return null;
       const u = data.user;
-      return { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email) };
+      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url').eq('id', u.id).single();
+      return { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits || 0, avatar: prof?.avatar_url };
     }
     return _demoRead();
   },
 
-  async signUp({ email, password, name }) {
+  async signUp({ email, password, name, referred_by }) {
+    const cleanEmail = email?.trim().toLowerCase() || '';
+    const cleanName = name?.trim().replace(/<[^>]*>?/gm, '').substring(0, 100) || '';
     if (this.client) {
-      const { data, error } = await this.client.auth.signUp({ email, password, options: { data: { name } } });
-      if (error) return { error: error.message };
+      const meta = { name: cleanName };
+      if (referred_by) meta.referred_by = referred_by;
+      const { data, error } = await this.client.auth.signUp({ email: cleanEmail, password, options: { data: meta } });
+      if (error) return { error: this._translateErr(error.message) };
       const u = data.user;
-      return { user: { id: u?.id, email, name: name || email.split('@')[0], initials: _initials(name, email) } };
+      return { user: { id: u?.id, email, name: name || email.split('@')[0], initials: _initials(name, email), plan: 'free', credits: 60 } };
     }
     await new Promise(r => setTimeout(r, 500)); // simula latência
-    const user = { id: 'demo-' + Date.now(), email, name: name || email.split('@')[0], initials: _initials(name, email), demo: true };
+    const user = { id: 'demo-' + Date.now(), email, name: name || email.split('@')[0], initials: _initials(name, email), demo: true, plan: 'free', credits: 60 };
     _demoWrite(user);
     return { user };
   },
 
   async signIn({ email, password }) {
+    const cleanEmail = email?.trim().toLowerCase() || '';
     if (this.client) {
-      const { data, error } = await this.client.auth.signInWithPassword({ email, password });
-      if (error) return { error: error.message };
+      const { data, error } = await this.client.auth.signInWithPassword({ email: cleanEmail, password });
+      if (error) return { error: this._translateErr(error.message) };
       const u = data.user;
-      return { user: { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email) } };
+      const { data: prof } = await this.client.from('profiles').select('plan, credits, avatar_url').eq('id', u.id).single();
+      return { user: { id: u.id, email: u.email, name: u.user_metadata?.name || u.email.split('@')[0], initials: _initials(u.user_metadata?.name, u.email), plan: prof?.plan || 'free', credits: prof?.credits || 0, avatar: prof?.avatar_url } };
     }
     await new Promise(r => setTimeout(r, 500));
-    const user = { id: 'demo-' + Date.now(), email, name: email.split('@')[0], initials: _initials('', email), demo: true };
+    const user = { id: 'demo-' + Date.now(), email, name: email.split('@')[0], initials: _initials('', email), demo: true, plan: 'pro', credits: 999 };
     _demoWrite(user);
     return { user };
   },

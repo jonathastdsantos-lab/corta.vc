@@ -19,6 +19,28 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
   const [lines, setLines] = useState(TRANSCRIPT);
   const [playing, setPlaying] = useState(true);
 
+  // Drag and drop do texto
+  function handleLineDragStart(e, idx) { e.dataTransfer.setData('text/plain', idx); }
+  function handleLineDrop(e, destIdx) {
+    e.preventDefault();
+    const srcIdx = +e.dataTransfer.getData('text/plain');
+    if (srcIdx === destIdx) return;
+    const newLines = [...lines];
+    const [moved] = newLines.splice(srcIdx, 1);
+    newLines.splice(destIdx, 0, moved);
+    setLines(newLines);
+  }
+
+  // Draggable caption box simulation (UX)
+  const [capY, setCapY] = useState(50);
+  const [draggingCap, setDraggingCap] = useState(false);
+  function handleCapDrag(e) {
+    if (!draggingCap) return;
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const y = Math.max(10, Math.min(90, ((e.clientY - bounds.top) / bounds.height) * 100));
+    setCapY(y);
+  }
+
   const style = { ...CAPTION_STYLES.find(s => s.id === styleId), hl: hlColor };
   const swatches = ['#ffe14d', '#7cf6c0', '#5ef1ff', '#ff7a9c', 'var(--accent)', '#ffffff'];
 
@@ -43,8 +65,7 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
     { id: 'export', label: T.ed_export, icon: 'send' },
   ];
 
-  const posStyle = pos === 'center' ? { top: '50%', transform: 'translateY(-50%)' }
-    : pos === 'bottom' ? { bottom: '16%' } : { top: '12%' };
+  const posStyle = { top: `${capY}%`, transform: 'translateY(-50%)', cursor: draggingCap ? 'grabbing' : 'grab' };
 
   return (
     <div className="editor stage-scope">
@@ -72,17 +93,24 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
             {layout === 'split' && <React.Fragment>
               <div style={{ position: 'absolute', inset: '0 0 50% 0', borderBottom: '2px solid rgba(255,255,255,.2)' }} />
             </React.Fragment>}
-            {/* live caption */}
-            <div className="live-cap" style={posStyle}>
+            {/* live caption (draggable) */}
+            <div 
+              className="live-cap" 
+              style={posStyle}
+              onPointerDown={() => setDraggingCap(true)}
+            >
               <CaptionText text={caption} style={style} fontSize={capSize} />
-            </div>
-            {/* top UI mimic */}
-            <div style={{ position: 'absolute', top: 12, left: 12, right: 12, display: 'flex', gap: 4, zIndex: 4 }}>
-              {[0, 1, 2, 3].map(i => <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i === 0 ? '#fff' : 'rgba(255,255,255,.35)' }} />)}
             </div>
           </div>
         </div>
 
+        <div 
+          className="ed-transport" 
+          onPointerUp={() => setDraggingCap(false)} 
+          onPointerLeave={() => setDraggingCap(false)} 
+          onPointerMove={handleCapDrag} 
+          style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents: draggingCap ? 'auto' : 'none' }} 
+        />
         <div className="ed-transport">
           <IconBtn name={playing ? 'film' : 'play'} onClick={() => setPlaying(!playing)} style={{ color: 'var(--stage-ink)', background: 'var(--stage-2)' }} bordered />
           <span className="mono" style={{ fontSize: 12, color: 'var(--stage-muted)' }}>0:0{clip.dur > 9 ? clip.dur % 10 : clip.dur} / 0:{clip.dur}</span>
@@ -120,9 +148,18 @@ function EditorScreen({ clip, lang, onClose, openAI, captionStyleId, onPickStyle
               </div>
 
               <div className="panel-group">
-                <div className="pg-label">{lang === 'en' ? 'Transcript' : 'Transcrição'} · {lang === 'en' ? 'click to edit' : 'clique p/ editar'}</div>
+                <div className="pg-label">{lang === 'en' ? 'Transcript' : 'Transcrição'} · {lang === 'en' ? 'drag to reorder' : 'arraste para reordenar'}</div>
                 {lines.map((l, i) => (
-                  <div key={i} className={`cap-line ${activeLine === i ? 'active' : ''}`} onClick={() => setActiveLine(i)}>
+                  <div key={i} 
+                       className={`cap-line ${activeLine === i ? 'active' : ''}`} 
+                       onClick={() => setActiveLine(i)}
+                       draggable
+                       onDragStart={e => handleLineDragStart(e, i)}
+                       onDragOver={e => e.preventDefault()}
+                       onDrop={e => handleLineDrop(e, i)}
+                       style={{ cursor: 'grab' }}
+                  >
+                    <Icon name="more" size={14} style={{ opacity: 0.3, marginRight: 6, flexShrink: 0 }} />
                     <span className="ts">{l.t}</span>
                     <span className="ct" contentEditable suppressContentEditableWarning
                       dangerouslySetInnerHTML={{ __html: l.text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />

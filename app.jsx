@@ -8,7 +8,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "dark": false,
   "density": "regular",
   "capStyle": "hormozi",
-  "lang": "pt"
+  "lang": localStorage.getItem("corta_lang") || "pt"
 }/*EDITMODE-END*/;
 
 const NAV = [
@@ -32,11 +32,57 @@ function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
 
+  const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
+  const [showNotif, setShowNotif] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+
+  // persiste lang
+  useEffect(() => {
+    localStorage.setItem('corta_lang', lang);
+  }, [lang]);
+
+  // inatividade
+  useEffect(() => {
+    let timeout;
+    let warningTimeout;
+    function resetTimer() {
+      setShowTimeoutWarning(false);
+      clearTimeout(timeout);
+      clearTimeout(warningTimeout);
+      warningTimeout = setTimeout(() => setShowTimeoutWarning(true), 25 * 60 * 1000);
+      timeout = setTimeout(() => logout(), 30 * 60 * 1000);
+    }
+    if (user) {
+      window.addEventListener('mousemove', resetTimer);
+      window.addEventListener('keydown', resetTimer);
+      resetTimer();
+    }
+    return () => {
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+      clearTimeout(timeout);
+      clearTimeout(warningTimeout);
+    };
+  }, [user]);
+
   // checa sessão ao montar
   useEffect(() => {
     let alive = true;
     Supa.getUser().then(u => { if (alive) { setUser(u); setAuthReady(true); } });
-    return () => { alive = false; };
+    
+    let authSub = null;
+    if (Supa.client) {
+      const { data } = Supa.client.auth.onAuthStateChange((event) => {
+        if (event === 'SIGNED_OUT') {
+          setUser(null);
+          setRoute('dashboard');
+        }
+      });
+      authSub = data.subscription;
+    }
+    return () => { alive = false; if(authSub) authSub.unsubscribe(); };
   }, []);
 
   async function logout() {
@@ -64,11 +110,13 @@ function App() {
   }
   function openClip(c) { setClip(c); setRoute('editor'); }
 
-  if (!authReady) {
-    return <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'var(--bg)' }}><span className="typing"><i /><i /><i /></span></div>;
-  }
+  if (!authReady) return <div className="page" style={{placeItems:'center'}}><Icon name="refresh" className="spin" size={32} /></div>;
+
   if (!user) {
-    return <AuthScreen lang={lang} onAuth={setUser} />;
+    if (showLanding && window.LandingPage) {
+      return <window.LandingPage onLogin={() => setShowLanding(false)} />;
+    }
+    return <AuthScreen lang={lang} onAuth={u => { setUser(u); }} />;
   }
 
   const crumbMap = {
@@ -107,10 +155,13 @@ function App() {
                 <div className="plan-card">
                   <div className="row between" style={{ marginBottom: 2 }}>
                     <span style={{ fontWeight: 700, fontSize: 13 }}>{T.plan}</span>
-                    <span className="tag accent" style={{ height: 20, fontSize: 11 }}><Icon name="zap" size={11} fill="current" />Pro</span>
+                    <span className={`tag ${user.plan !== 'free' ? 'accent' : ''}`} style={{ height: 20, fontSize: 11, textTransform: 'capitalize' }}>
+                      {user.plan !== 'free' && <Icon name="zap" size={11} fill="current" />}
+                      {user.plan}
+                    </span>
                   </div>
-                  <div className="meter"><i style={{ width: '64%' }} /></div>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>320 {T.credits}</div>
+                  <div className="meter"><i style={{ width: Math.min(100, (user.credits / (user.plan === 'free' ? 60 : 999)) * 100) + '%' }} /></div>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{user.credits} {T.credits}</div>
                 </div>
               )}
               <div className="user-row">
@@ -126,6 +177,12 @@ function App() {
 
           {/* MAIN */}
           <div className="main">
+            {user?.plan === 'free' && user?.credits <= 0 && (
+              <div style={{background: '#ea4335', color: '#fff', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 500, fontSize: 14}}>
+                <span>{lang === 'en' ? 'You have used all your free plan credits.' : 'Você usou todos os créditos do plano gratuito.'}</span>
+                <Btn variant="dark" size="sm" onClick={() => setShowUpgrade(true)}>{lang === 'en' ? 'Upgrade' : 'Fazer upgrade'}</Btn>
+              </div>
+            )}
             <div className="topbar">
               <IconBtn name="drag" size={18} onClick={() => setCollapsed(!collapsed)} />
               <div className="crumb">
@@ -184,6 +241,25 @@ function App() {
         <TweakRadio label={lang === 'en' ? 'Language' : 'Idioma'} value={t.lang}
           options={['pt', 'en']} onChange={v => setTweak('lang', v)} />
       </TweaksPanel>
+
+      {showTimeoutWarning && (
+        <div style={{position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', zIndex: 9999}}>
+          <div className="card fade-up" style={{padding: 24, width: 320, textAlign: 'center'}}>
+            <h3 style={{marginBottom: 8}}>{lang === 'en' ? 'Session expiring' : 'Sessão expirando'}</h3>
+            <p style={{marginBottom: 24, color: 'var(--muted)', fontSize: 14}}>{lang === 'en' ? 'Your session will expire in 5 minutes due to inactivity.' : 'Sua sessão vai expirar em 5 minutos por inatividade.'}</p>
+            <Btn variant="primary" style={{width: '100%'}} onClick={() => setShowTimeoutWarning(false)}>{lang === 'en' ? 'Stay logged in' : 'Continuar conectado'}</Btn>
+          </div>
+        </div>
+      )}
+
+      {showUpgrade && window.UpgradeModal && (
+        <window.UpgradeModal 
+          lang={lang} 
+          currentPlan={user?.plan} 
+          user={user} 
+          onClose={() => setShowUpgrade(false)} 
+        />
+      )}
     </React.Fragment>
   );
 }

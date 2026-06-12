@@ -29,6 +29,16 @@ returns trigger language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, name)
   values (new.id, coalesce(new.raw_user_meta_data->>'name', split_part(new.email,'@',1)));
+  
+  if new.raw_user_meta_data->>'referred_by' is not null then
+    begin
+      insert into public.referrals (referrer_id, referred_id)
+      values ((new.raw_user_meta_data->>'referred_by')::uuid, new.id);
+    exception when others then
+      -- ignora se o referrer for invalido
+    end;
+  end if;
+  
   return new;
 end; $$;
 
@@ -110,6 +120,52 @@ create table if not exists public.schedule (
 create index if not exists schedule_user_idx on public.schedule(user_id, scheduled_at);
 
 -- ============================================================
+-- REDES SOCIAIS (OAuth)
+-- ============================================================
+create table if not exists public.social_connections (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  platform      text not null, -- tiktok | youtube | instagram
+  access_token  text not null,
+  refresh_token text,
+  expires_at    timestamptz,
+  platform_id   text,
+  username      text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  unique(user_id, platform)
+);
+create index if not exists social_conn_user_idx on public.social_connections(user_id);
+
+-- ============================================================
+-- AFILIADOS E REFERRALS
+-- ============================================================
+create table if not exists public.referrals (
+  id            uuid primary key default gen_random_uuid(),
+  referrer_id   uuid not null references auth.users(id) on delete cascade,
+  referred_id   uuid not null references auth.users(id) on delete cascade,
+  status        text default 'pending', -- pending | converted
+  reward_amount int default 0,
+  created_at    timestamptz not null default now(),
+  unique(referred_id)
+);
+create index if not exists referrals_referrer_idx on public.referrals(referrer_id);
+
+-- ============================================================
+-- NOTIFICAÇÕES IN-APP
+-- ============================================================
+create table if not exists public.notifications (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  title       text not null,
+  body        text,
+  link        text,
+  read        boolean default false,
+  created_at  timestamptz not null default now()
+);
+create index if not exists notifications_user_idx on public.notifications(user_id, created_at desc);
+
+-- ============================================================
 -- ROW LEVEL SECURITY — cada usuário só vê o que é dele
 -- ============================================================
 alter table public.profiles  enable row level security;
@@ -117,6 +173,9 @@ alter table public.projects  enable row level security;
 alter table public.clips     enable row level security;
 alter table public.templates enable row level security;
 alter table public.schedule  enable row level security;
+alter table public.social_connections enable row level security;
+alter table public.referrals enable row level security;
+alter table public.notifications enable row level security;
 
 -- profiles
 create policy "own profile - select" on public.profiles for select using (auth.uid() = id);
@@ -126,6 +185,9 @@ create policy "own profile - update" on public.profiles for update using (auth.u
 create policy "projects owner"  on public.projects  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "clips owner"     on public.clips     for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "schedule owner"  on public.schedule  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "social conn owner" on public.social_connections for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "referrals read" on public.referrals for select using (auth.uid() = referrer_id or auth.uid() = referred_id);
+create policy "notifications owner" on public.notifications for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- templates: lê os globais (user_id null) + os próprios; só edita os próprios
 create policy "templates read"   on public.templates for select using (user_id is null or auth.uid() = user_id);
@@ -147,3 +209,27 @@ create policy "videos owner" on storage.objects for all
 create policy "clips owner" on storage.objects for all
   using (bucket_id = 'clips' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'clips' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ============================================================
+-- FUNÇÕES RPC
+-- ============================================================
+create or replace function public.decrement_credits(user_id_param uuid, amount int)
+returns int
+language plpgsql
+security definer
+as $$
+declare
+  current_credits int;
+begin
+  update public.profiles
+  set credits = credits - amount
+  where id = user_id_param and credits >= amount
+  returning credits into current_credits;
+  
+  if current_credits is null then
+    raise exception 'Créditos insuficientes ou usuário não encontrado';
+  end if;
+  
+  return current_credits;
+end;
+$$;

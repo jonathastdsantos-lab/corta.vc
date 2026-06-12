@@ -2,9 +2,31 @@
    SCREENS — Dashboard · Import · Processing · Clips
    ============================================================ */
 
-function Dashboard({ lang, go, openAI }) {
+function Dashboard({ lang, go, openAI, user }) {
   const T = STR[lang];
   const [link, setLink] = useState('');
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      if (!Supa.client || !user) {
+        setProjects(window.PROJECTS || []);
+        setLoading(false);
+        return;
+      }
+      const { data } = await Supa.client.from('projects')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(6);
+      
+      setProjects(data || []);
+      setLoading(false);
+    }
+    load();
+  }, [user]);
+
   const sources = [
     { ic: 'youtube', label: 'YouTube' }, { ic: 'upload', label: lang === 'en' ? 'Upload' : 'Upload', plain: true },
     { ic: 'link', label: 'Drive', plain: true }, { ic: 'gamepad', label: 'Twitch', plain: true },
@@ -53,16 +75,27 @@ function Dashboard({ lang, go, openAI }) {
         <button className="link-more" onClick={() => go('clips')}>{T.see_all} <Icon name="arrowR" size={15} /></button>
       </div>
       <div className="proj-grid stagger">
-        {PROJECTS.map(p => (
+        {loading ? (
+          [1,2,3].map(i => (
+            <div key={i} className="proj-card" style={{height: 200, background: 'var(--surface-3)', animation: 'pulse 1.5s infinite'}} />
+          ))
+        ) : projects.length === 0 ? (
+          <div className="empty-state" style={{gridColumn: '1 / -1', padding: 40, textAlign: 'center', background: 'var(--surface-2)', borderRadius: 12}}>
+            <div style={{marginBottom: 12}}><Icon name="film" size={32} /></div>
+            <h3>{lang === 'en' ? 'No projects yet' : 'Nenhum projeto ainda'}</h3>
+            <p className="sub" style={{marginBottom: 16}}>{lang === 'en' ? 'Import your first video to start clipping.' : 'Importe seu primeiro vídeo para começar a cortar.'}</p>
+            <Btn variant="primary" onClick={() => go('import')}>{lang === 'en' ? 'Import video' : 'Importar vídeo'}</Btn>
+          </div>
+        ) : projects.map(p => (
           <button key={p.id} className="proj-card" onClick={() => go('clips', { project: p })}>
-            <Thumb niche={p.niche} ratio="16:9" dur={p.dur}>
-              <span className="badge-tl"><Icon name={p.src === 'youtube' ? undefined : 'film'} plat={p.src === 'youtube' ? 'youtube' : undefined} size={12} /></span>
+            <Thumb niche={p.niche || 'podcast'} ratio="16:9" dur={p.duration || 0}>
+              <span className="badge-tl"><Icon name={p.source_type === 'youtube' ? undefined : 'film'} plat={p.source_type === 'youtube' ? 'youtube' : undefined} size={12} /></span>
             </Thumb>
             <div className="body">
               <div className="title">{p.title}</div>
               <div className="meta">
-                <span className="tag accent"><Icon name="scissors" size={12} />{p.clips} {T.clips_from}</span>
-                <span style={{ marginLeft: 'auto' }}>{p.when}</span>
+                <span className="tag accent"><Icon name="scissors" size={12} />{p.clips || 0} {T.clips_from}</span>
+                <span style={{ marginLeft: 'auto' }}>{p.status === 'processing' ? 'Processando' : (p.created_at ? new Date(p.created_at).toLocaleDateString() : p.when)}</span>
               </div>
             </div>
           </button>
@@ -80,14 +113,47 @@ function ImportScreen({ lang, go, user }) {
   const [ratio, setRatio] = useState('9:16');
   const [caps, setCaps] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const fileRef = useRef(null);
   const ideas = lang === 'en' ? PROMPT_IDEAS_EN : PROMPT_IDEAS_PT;
 
   async function onFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const mb = file.size / (1024 * 1024);
+    if (mb > 500) {
+      if (!confirm(`Arquivo grande (${mb.toFixed(0)}MB). O processamento pode levar alguns minutos. Deseja continuar?`)) return;
+    }
+
     setUploading(true);
-    await Supa.uploadVideo(file, user?.id || 'anon');
+    setUploadPct(0);
+
+    const iv = setInterval(() => {
+      setUploadPct(p => Math.min(99, p + Math.random() * 5));
+    }, 500);
+
+    const res = await Supa.uploadVideo(file, user?.id || 'anon');
+    clearInterval(iv);
+
+    if (res.error) {
+      setUploading(false);
+      alert('Erro no upload: ' + res.error);
+      return;
+    }
+
+    setUploadPct(100);
+
+    if (Supa.client && user) {
+      await Supa.client.from('projects').insert({
+        user_id: user.id,
+        title: file.name,
+        source_type: 'upload',
+        storage_path: res.path,
+        status: 'processing'
+      });
+    }
+
     setUploading(false);
     go('processing');
   }
@@ -107,7 +173,7 @@ function ImportScreen({ lang, go, user }) {
         <div className="dropzone" onClick={() => !uploading && fileRef.current?.click()}>
           <input ref={fileRef} type="file" accept="video/*" hidden onChange={onFile} />
           <div className="dz-icon"><Icon name={uploading ? 'refresh' : 'upload'} size={26} className={uploading ? 'spin' : ''} /></div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{uploading ? (lang === 'en' ? 'Uploading…' : 'Enviando…') : (lang === 'en' ? 'Drop your video or paste a link' : 'Solte seu vídeo ou cole um link')}</div>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{uploading ? (lang === 'en' ? `Uploading… ${Math.round(uploadPct)}%` : `Enviando… ${Math.round(uploadPct)}%`) : (lang === 'en' ? 'Drop your video or paste a link' : 'Solte seu vídeo ou cole um link')}</div>
           <div className="sub" style={{ marginTop: 4 }}>{T.accepts}</div>
           <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 16 }}>
             {['youtube', 'instagram', 'tiktok'].map(p => <span key={p} className="plat" style={{ width: 30, height: 30 }} ><Icon plat={p} size={16} /></span>)}
@@ -169,122 +235,136 @@ function ImportScreen({ lang, go, user }) {
   );
 }
 
-function ProcessingScreen({ lang, go }) {
+function ProcessingScreen({ lang, go, project }) {
   const T = STR[lang];
-  const steps = lang === 'en'
-    ? ['Transcribing audio', 'Finding key moments', 'Scoring virality', 'Reframing & captions']
-    : ['Transcrevendo o áudio', 'Achando os melhores momentos', 'Calculando viralização', 'Reenquadrando e legendando'];
-  const stepIcons = ['mic', 'target', 'flame', 'crop'];
-  const [active, setActive] = useState(0);
-  const [pct, setPct] = useState(0);
+  const [err, setErr] = useState(false);
 
   useEffect(() => {
-    const total = 5200;
-    const start = Date.now();
-    const iv = setInterval(() => {
-      const e = Date.now() - start;
-      const p = Math.min(100, (e / total) * 100);
-      setPct(p);
-      setActive(Math.min(steps.length - 1, Math.floor((p / 100) * steps.length)));
-      if (p >= 100) { clearInterval(iv); setTimeout(() => go('clips'), 500); }
-    }, 60);
+    let iv;
+    if (Supa.client && project?.id) {
+      iv = setInterval(async () => {
+        const { data } = await Supa.client
+          .from('projects').select('status').eq('id', project.id).single();
+        if (data?.status === 'ready') { clearInterval(iv); go('clips', { project }); }
+        if (data?.status === 'failed') { clearInterval(iv); setErr(true); }
+      }, 3000);
+    } else {
+      const ms = { auto: 8000, '<30': 4000, '30-60': 6000, '60-90': 8000 }[project?.dur || 'auto'] || 8000;
+      iv = setTimeout(() => go('clips', { project }), ms);
+    }
     return () => clearInterval(iv);
-  }, []);
+  }, [project, go]);
 
-  const r = 54, c = 2 * Math.PI * r;
   return (
-    <div className="page">
-      <div className="proc-wrap fade-up">
-        <div className="proc-ring">
-          <svg width="120" height="120" style={{ transform: 'rotate(-90deg)' }}>
-            <circle cx="60" cy="60" r={r} fill="none" stroke="var(--surface-3)" strokeWidth="8" />
-            <circle cx="60" cy="60" r={r} fill="none" stroke="var(--accent)" strokeWidth="8" strokeLinecap="round"
-              strokeDasharray={c} strokeDashoffset={c - (pct / 100) * c} style={{ transition: 'stroke-dashoffset .1s linear' }} />
-          </svg>
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
-            <div className="mono" style={{ fontSize: 26, fontWeight: 700 }}>{Math.round(pct)}%</div>
-          </div>
-        </div>
-        <h1 className="h1">{T.processing}</h1>
-        <p className="sub">{T.processing_sub}</p>
-
-        <div className="proc-steps card" style={{ padding: 8 }}>
-          {steps.map((s, i) => (
-            <div key={i} className={`proc-step ${i < active ? 'done' : i === active ? 'active' : ''}`}>
-              <div className="pstep-ic">
-                {i < active ? <Icon name="check" size={15} /> : i === active ? <Icon name={stepIcons[i]} size={15} className="spin" /> : <Icon name={stepIcons[i]} size={15} />}
-              </div>
-              <span className="grow">{s}</span>
-              {i < active && <span className="mono" style={{ fontSize: 12, color: 'var(--good)' }}>✓</span>}
-              {i === active && <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>…</span>}
-            </div>
-          ))}
-        </div>
+    <div className="page" style={{ placeItems: 'center', textAlign: 'center' }}>
+      <div className="fade-up" style={{ maxWidth: 360 }}>
+        {err ? (
+          <React.Fragment>
+            <div style={{ marginBottom: 24, color: 'var(--accent)' }}><Icon name="alert" size={48} /></div>
+            <h1 className="h1">{lang === 'en' ? 'Processing failed' : 'Falha no processamento'}</h1>
+            <p className="sub" style={{ margin: '8px 0 24px' }}>{lang === 'en' ? 'An error occurred while generating clips.' : 'Ocorreu um erro ao gerar seus cortes.'}</p>
+            <Btn variant="primary" onClick={() => go('import')}>{lang === 'en' ? 'Try again' : 'Tentar novamente'}</Btn>
+          </React.Fragment>
+        ) : (
+          <React.Fragment>
+            <div style={{ marginBottom: 24 }}><Icon name="refresh" size={48} className="spin" style={{ color: 'var(--accent)' }} /></div>
+            <h1 className="h1">{T.proc_title}</h1>
+            <p className="sub" style={{ margin: '8px 0 24px' }}>{T.proc_sub}</p>
+            <div className="meter" style={{ height: 6 }}><i style={{ animation: 'progress 8s ease-out forwards' }} /></div>
+            <style>{`@keyframes progress { 0% { width: 0%; } 20% { width: 15%; } 50% { width: 45%; } 80% { width: 85%; } 100% { width: 95%; } }`}</style>
+          </React.Fragment>
+        )}
       </div>
     </div>
   );
 }
 
-function ClipsScreen({ lang, go, project, openClip }) {
+function ClipsScreen({ lang, go, project }) {
   const T = STR[lang];
-  const [sort, setSort] = useState('score');
-  const [niche, setNiche] = useState('all');
-  const sorted = useMemo(() => {
-    let arr = [...CLIPS];
-    if (niche !== 'all') arr = arr.filter(c => c.niche === niche);
-    if (sort === 'score') arr.sort((a, b) => b.score - a.score);
-    if (sort === 'dur') arr.sort((a, b) => a.dur - b.dur);
-    return arr;
-  }, [sort, niche]);
-  const niches = ['all', ...new Set(CLIPS.map(c => c.niche))];
+  const [clips, setClips] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [previewUrl, setPreviewUrl] = useState(null);
+
+  useEffect(() => {
+    async function load() {
+      if (!Supa.client || !project?.id) {
+        setClips(window.CLIPS || []);
+        setLoading(false);
+        return;
+      }
+      const { data } = await Supa.client
+        .from('clips')
+        .select('*')
+        .eq('project_id', project.id)
+        .order('score', { ascending: false });
+      setClips(data || []);
+      setLoading(false);
+    }
+    load();
+  }, [project]);
+
+  async function dl(clip, e) {
+    e.stopPropagation();
+    if (!Supa.client) { alert('Modo demo'); return; }
+    try {
+      e.target.innerText = '...';
+      const { data } = await Supa.client.storage.from('clips').download(clip.storage_path);
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `corta-vc-${clip.title.replace(/\W+/g, '-')}.mp4`;
+      a.click();
+      e.target.innerText = lang === 'en' ? 'Download' : 'Baixar';
+    } catch(err) { alert('Erro no download'); }
+  }
 
   return (
-    <div className="page page-wide">
-      <div className="section-head fade-up">
-        <div>
-          <div className="h-eyebrow">{project ? (lang === 'en' ? 'From project' : 'Do projeto') : (lang === 'en' ? 'Latest batch' : 'Último lote')}</div>
-          <h1 className="h1">{project ? project.title.slice(0, 42) + (project.title.length > 42 ? '…' : '') : (lang === 'en' ? 'Your clips' : 'Seus cortes')}</h1>
-          <p className="sub">{sorted.length} {T.clips_ready} · {lang === 'en' ? 'ranked by AI virality score' : 'ordenados pela nota de viralização da IA'}</p>
-        </div>
-        <Btn variant="dark" icon="plus" onClick={() => go('import')}>{T.new_clip}</Btn>
-      </div>
-
-      <div className="filter-bar">
-        {niches.map(n => (
-          <button key={n} className={`chip-toggle ${niche === n ? 'on' : ''}`} onClick={() => setNiche(n)}>
-            {n === 'all' ? T.filter_all : NICHES[n].label}
-          </button>
-        ))}
-        <div style={{ marginLeft: 'auto' }}>
-          <div className="seg">
-            <button className={sort === 'score' ? 'on' : ''} onClick={() => setSort('score')}>{T.sort_score}</button>
-            <button className={sort === 'dur' ? 'on' : ''} onClick={() => setSort('dur')}>{T.sort_dur}</button>
-          </div>
-        </div>
+    <div className="page fade-up">
+      <div className="topbar">
+        <IconBtn name="arrowL" size={20} onClick={() => go('dashboard')} />
+        <h2 className="h2">{project?.title || 'Projeto'}</h2>
       </div>
 
       <div className="clips-grid stagger">
-        {sorted.map(c => {
-          const style = CAPTION_STYLES[0];
-          return (
-            <div key={c.id} className="clip-card" onClick={() => openClip(c)}>
-              <Thumb niche={c.niche} dur={c.dur} score={c.score}>
-                <div className="cap"><CaptionText text={c.cap} style={style} fontSize={13} /></div>
-              </Thumb>
-              <div className="body">
-                <div className="title">{c.title}</div>
-                <div className="foot">
-                  <span className="tag"><Icon name="flame" size={12} />{c.hook}</span>
-                  <div className="row" style={{ gap: 4 }}>
-                    <IconBtn name="scissors" size={15} onClick={e => { e.stopPropagation(); openClip(c); }} />
-                    <IconBtn name="download" size={15} onClick={e => e.stopPropagation()} />
-                  </div>
+        {loading ? (
+          <div style={{padding: 20}}>Carregando cortes...</div>
+        ) : clips.map(c => (
+          <div key={c.id} className="clip-card fade-up">
+            <div className="clip-top" onClick={() => c.storage_path && setPreviewUrl(Supa.client.storage.from('clips').getPublicUrl(c.storage_path).data.publicUrl)}>
+              {c.thumbnail_url ? (
+                <img src={c.thumbnail_url} alt="thumb" style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block'}} />
+              ) : (
+                <Thumb niche={c.niche} ratio={c.ratio || '9:16'} dur={c.duration} />
+              )}
+              <div className="badge-tl" style={{ background: c.score >= 80 ? 'var(--good)' : 'rgba(0,0,0,.6)' }}>
+                {c.score} <Icon name="zap" size={12} fill="current" />
+              </div>
+              <div className="clip-acts">
+                <IconBtn name="play" variant="primary" style={{ borderRadius: 99 }} />
+              </div>
+            </div>
+            <div className="body">
+              <div className="title" style={{ fontSize: 13 }}>{c.title}</div>
+              <div className="meta" style={{ marginTop: 8 }}>
+                <Btn size="sm" variant="ghost" onClick={() => go('editor', { project, clip: c })}>{T.edit}</Btn>
+                <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
+                  <Btn size="sm" variant="ghost" icon="send">{lang === 'en' ? 'Post' : 'Postar'}</Btn>
+                  <Btn size="sm" variant="primary" icon="download" onClick={(e) => dl(c, e)}>{T.dl}</Btn>
                 </div>
               </div>
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
+      
+      {previewUrl && (
+        <div style={{position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'grid', placeItems: 'center', zIndex: 9999}}>
+          <div style={{position: 'absolute', top: 20, right: 20}}>
+            <IconBtn name="close" size={32} onClick={() => setPreviewUrl(null)} />
+          </div>
+          <video src={previewUrl} controls autoPlay style={{maxWidth: '90%', maxHeight: '90%', borderRadius: 12}} />
+        </div>
+      )}
     </div>
   );
 }
