@@ -1238,66 +1238,6 @@ serve(async (req) => {
     // ── 8. Silence detection + filler removal ─────────────────────
     let activeVideoPath = sourceVideoPath;
     let activeWords: Word[] = words;
-    const anthropic     = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
-    const maxClips      = Math.min(15, Math.max(5, Math.floor(durationSeconds / 180)));
-    const cleanFullText = activeWords.map(w => w.word).join(' ');
-
-    // Intenção do usuário (campo clip_prompt do projeto)
-    const userIntent = (project.clip_prompt ?? '').trim();
-    const hasIntent  = userIntent.length > 0;
-
-    // ── Seção de intenção: instrução extra quando o usuário preencheu o prompt
-    //
-    // Com intenção: Claude PRIORIZA momentos que correspondem ao tema pedido.
-    //   O maxClips é reduzido se necessário para manter relevância.
-    //   Se não encontrar momentos suficientes, pode incluir os melhores disponíveis.
-    //
-    // Sem intenção: comportamento padrão — seleciona os mais virais.
-    // ────────────────────────────────────────────────────────────────────────────
-
-    const intentSection = hasIntent ? `
-INTENÇÃO DO USUÁRIO (PRIORIDADE MÁXIMA):
-"${userIntent}"
-
-INSTRUÇÕES PARA A INTENÇÃO:
-- Selecione APENAS momentos que correspondam diretamente à intenção acima
-- Se a intenção especifica um tema (ex: "finanças"), inclua SOMENTE trechos sobre esse tema
-- Se a intenção especifica uma emoção (ex: "engraçado"), inclua SOMENTE os momentos com essa emoção
-- Se a intenção especifica um formato (ex: "apenas dados e estatísticas"), filtre rigorosamente
-- Se não houver momentos suficientes que satisfaçam a intenção, inclua os mais próximos e reduza o count
-- O campo "hook" deve descrever como este momento específico satisfaz a intenção do usuário
-- NÃO inclua momentos que não se relacionem com a intenção, mesmo que sejam viralmente fortes
-` : `
-SEM INTENÇÃO ESPECÍFICA: selecione os ${maxClips} momentos mais virais do vídeo.
-`;
-
-    const claudePrompt = `Você é um especialista em conteúdo viral para redes sociais brasileiras (TikTok, Reels, Shorts).
-Analise esta transcrição e selecione os melhores momentos para cortes virais.
-${intentSection}
-TRANSCRIÇÃO COMPLETA:
-${cleanFullText}
-
-TIMESTAMPS DAS PALAVRAS (use para calcular start_s e end_s precisos):
-${JSON.stringify(activeWords.slice(0, 500))}
-
-NICHO: ${project.niche || 'geral'}
-DURAÇÃO ALVO: 30–90 segundos por corte
-QUANTIDADE ALVO: ${hasIntent ? \`até \${maxClips} (pode ser menos se a intenção filtrar muito)\` : maxClips}
-
-Retorne SOMENTE um JSON array válido, sem markdown, sem texto antes ou depois:
-[{
-  "start_s": number,
-  "end_s": number,
-  "title": "título com até 60 chars e 1 emoji",
-  "caption": "frase impactante com a palavra mais forte entre {chaves}",
-  "hook": "${hasIntent ? 'como este momento satisfaz a intenção do usuário' : 'tipo do gancho'}",
-  "score": number entre 0 e 100,
-  "hashtags": ["#tag1","#tag2","#tag3","#tag4","#tag5"],
-  "niche": "${project.niche || 'geral'}"
-}]
-
-Critérios de score alto: gancho nos 3s iniciais, dado surpreendente, emoção forte, pergunta curiosa.
-Excluir: silêncios >5s, apresentações genéricas, frases incompletas.\`;
     let silencesRemoved = 0;
     let fillersRemoved  = 0;
     let secondsSaved    = 0;
@@ -1378,7 +1318,7 @@ ${JSON.stringify(activeWords.slice(0, 500))}
 
 NICHO: ${project.niche || 'geral'}
 DURAÇÃO ALVO: 30–90 segundos por corte
-QUANTIDADE ALVO: ${hasIntent ? \`até \${maxClips} (pode ser menos se a intenção filtrar muito)\` : maxClips}
+QUANTIDADE ALVO: ${hasIntent ? "até " + maxClips + " (pode ser menos se a intenção filtrar muito)" : maxClips}
 
 Retorne SOMENTE um JSON array válido, sem markdown, sem texto antes ou depois:
 [{

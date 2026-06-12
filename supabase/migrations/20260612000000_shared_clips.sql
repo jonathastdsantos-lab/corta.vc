@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS public.shared_clips CASCADE;
 CREATE TABLE IF NOT EXISTS public.shared_clips (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   clip_id uuid NOT NULL REFERENCES public.clips(id) ON DELETE CASCADE,

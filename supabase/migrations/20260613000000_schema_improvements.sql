@@ -75,20 +75,4 @@ ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
 drop policy if exists "payments owner" on public.payments;
 CREATE POLICY "payments owner" ON public.payments FOR SELECT USING (auth.uid() = user_id);
 
--- ============================================================
--- CRON JOB: disparar post-clip a cada 5 minutos
--- ============================================================
-SELECT cron.schedule(
-  'post-scheduled-clips',
-  '*/5 * * * *',
-  $$
-  SELECT net.http_post(
-    url := current_setting('app.supabase_url') || '/functions/v1/post-clip',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
-    ),
-    body := '{}'::jsonb
-  );
-  $$
-);
+
