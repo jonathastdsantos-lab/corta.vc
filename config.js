@@ -16,7 +16,7 @@ window.CORTA_CONFIG = {
     const meta = document.querySelector('meta[name="sb-anon-key"]');
     if (meta && meta.content && meta.content.startsWith('eyJ')) return meta.content;
     // Fallback: modo demo
-    return '';
+    return 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNoempjaGlvcnRmcm5wc29pcnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMTkwNDgsImV4cCI6MjA5Njc5NTA0OH0.tUNV3qau_VIqqMPig4Ng6HhSql9GV47zzYTwYaXL0oQ';
   })(),
 };
 
