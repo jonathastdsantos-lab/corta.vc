@@ -1,7 +1,11 @@
--- Campo para rastrear se face tracking foi aplicado no clip
+-- Campos de face tracking nos clips e projetos
 ALTER TABLE public.clips
   ADD COLUMN IF NOT EXISTS face_tracking_applied boolean NOT NULL DEFAULT false;
 
--- Campo no projeto para armazenar os dados de face (cache para re-render)
 ALTER TABLE public.projects
-  ADD COLUMN IF NOT EXISTS face_data jsonb;
+  ADD COLUMN IF NOT EXISTS face_tracking_applied boolean NOT NULL DEFAULT false;
+
+-- Índice para analytics de uso do feature
+CREATE INDEX IF NOT EXISTS idx_clips_face_tracking
+  ON public.clips (face_tracking_applied)
+  WHERE face_tracking_applied = true;

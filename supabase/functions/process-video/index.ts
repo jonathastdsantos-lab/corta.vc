@@ -35,112 +35,19 @@ function wordsToSrt(words: Array<{ word: string; start: number; end: number }>):
   return srt;
 }
 
-function buildSubtitleFilter(
-  srtPath: string,
-  style: string,
-  isFree: boolean,
-  brandPrefs?: {
-    logo_url?: string | null;
-    brand_color?: string;
-    brand_font?: string;
-    logo_position?: string;
-    logo_size?: number;
-    cta_text?: string;
-    cta_enabled?: boolean;
-    logoLocalPath?: string; // caminho local do logo já baixado
-  }
-): string {
-  // ── Legenda ──────────────────────────────────────────────────────
-  const fontName = brandPrefs?.brand_font
-    ? ({
-        'Schibsted Grotesk': 'SchibstedGrotesk',
-        'Anton':  'Anton',
-        'Poppins':'Poppins',
-      }[brandPrefs.brand_font] ?? 'Arial')
-    : 'Arial';
-
+function buildSubtitleFilter(srtPath: string, style: string, isFree: boolean): string {
+  const watermark = isFree
+    ? `,drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
+    : '';
   const STYLES: Record<string, string> = {
-    hormozi:    `FontName=${fontName},FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Uppercase=1,Alignment=10`,
-    clean:      `FontName=${fontName},FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,Outline=0,Shadow=0,Alignment=2`,
-    karaoke:    `FontName=${fontName},FontSize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00E8543B,Outline=3,Shadow=1,Uppercase=1,Alignment=10`,
-    minimal:    `FontName=${fontName},FontSize=22,Bold=0,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Alignment=2`,
-    neon:       `FontName=${fontName},FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H005EF1FF,Outline=3,Shadow=2,Uppercase=1,Alignment=10`,
-    'bold-bar': `FontName=${fontName},FontSize=26,Bold=1,PrimaryColour=&H00111111,BackColour=&H00E8543B,BorderStyle=4,Outline=0,Uppercase=1,Alignment=2`,
+    hormozi:    `FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Uppercase=1,Alignment=10`,
+    clean:      `FontName=Arial,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,Outline=0,Shadow=0,Alignment=2`,
+    karaoke:    `FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00E8543B,Outline=3,Shadow=1,Uppercase=1,Alignment=10`,
+    minimal:    `FontName=Arial,FontSize=22,Bold=0,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Alignment=2`,
+    neon:       `FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H005EF1FF,Outline=3,Shadow=2,Uppercase=1,Alignment=10`,
+    'bold-bar': `FontName=Arial,FontSize=26,Bold=1,PrimaryColour=&H00111111,BackColour=&H00E8543B,BorderStyle=4,Outline=0,Uppercase=1,Alignment=2`,
   };
-
-  const subtitleFilter = `subtitles=${srtPath}:force_style='${STYLES[style] ?? STYLES['hormozi']}'`;
-
-  // ── Filtros a empilhar ────────────────────────────────────────────
-  const filters: string[] = [subtitleFilter];
-
-  // ── Watermark corta.vc (só plano free) ───────────────────────────
-  if (isFree) {
-    filters.push(
-      `drawtext=text='corta.vc':fontcolor=white@0.6:fontsize=20:x=w-tw-16:y=h-th-16:shadowcolor=black:shadowx=1:shadowy=1`
-    );
-  }
-
-  // ── Logo da marca (planos pagos, se brand_prefs tiver logo) ───────
-  const logoPath = brandPrefs?.logoLocalPath;
-  if (!isFree && logoPath) {
-    const size = brandPrefs?.logo_size ?? 10;    // % da largura
-    const pos  = brandPrefs?.logo_position ?? 'br';
-
-    // Dimensão: size% da largura do vídeo (iw)
-    const logoW = `iw*${(size / 100).toFixed(3)}`;
-    const logoH = -1; // -1 = mantém proporção
-
-    // Margem fixa de 24px dos cantos
-    const MARGIN = 24;
-    const xMap: Record<string, string> = {
-      tl: `${MARGIN}`,
-      tr: `W-w-${MARGIN}`,
-      bl: `${MARGIN}`,
-      br: `W-w-${MARGIN}`,
-    };
-    const yMap: Record<string, string> = {
-      tl: `${MARGIN}`,
-      tr: `${MARGIN}`,
-      bl: `H-h-${MARGIN}`,
-      br: `H-h-${MARGIN}`,
-    };
-
-    const ox = xMap[pos] ?? xMap['br'];
-    const oy = yMap[pos] ?? yMap['br'];
-
-    // movie filter: carrega o logo como stream separado, redimensiona e faz overlay
-    // Nota: fluent-ffmpeg usa -vf para filter_complex simples — para overlay com
-    // input adicional usamos a sintaxe de input inline do movie filter
-    filters.push(
-      `movie=${logoPath}[logo];[logo]scale=${logoW}:${logoH}[slogo];[in][slogo]overlay=${ox}:${oy}`
-    );
-  }
-
-  // ── CTA text (planos pagos, se habilitado) ────────────────────────
-  if (!isFree && brandPrefs?.cta_enabled && brandPrefs?.cta_text) {
-    const ctaText = brandPrefs.cta_text
-      .replace(/'/g, "'")     // escapa aspas simples
-      .replace(/:/g, '\\:')   // escapa dois-pontos (FFmpeg)
-      .replace(/\[/g, '\\[')  // escapa colchetes
-      .replace(/\]/g, '\\]')
-      .substring(0, 60);
-
-    // Cor da marca em formato ARGB do FFmpeg (0xAARRGGBB)
-    const hex = (brandPrefs.brand_color ?? '#e8543b').replace('#', '');
-    const r = hex.slice(0,2), g = hex.slice(2,4), b = hex.slice(4,6);
-    const ffColor = `0x${r}${g}${b}`;
-
-    // CTA fixo no rodapé: y = H - 80 (acima do último quinto do vídeo)
-    filters.push(
-      `drawtext=text='${ctaText}':fontcolor=${ffColor}:fontsize=22:` +
-      `x=(w-text_w)/2:y=H-80:shadowcolor=black@0.6:shadowx=1:shadowy=1:` +
-      `box=1:boxcolor=black@0.3:boxborderw=8`
-    );
-  }
-
-  // Se só tem o subtitle filter (sem overlay de logo), usa -vf simples
-  // Se tem overlay (movie filter), o filtro já está em formato filter_complex
-  return filters.join(',');
+  return `subtitles=${srtPath}:force_style='${STYLES[style] ?? STYLES['hormozi']}'${watermark}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,57 +56,36 @@ function buildSubtitleFilter(
 
 type Word = { word: string; start: number; end: number };
 
-// Um intervalo de tempo no vídeo original que deve ser REMOVIDO
 interface RemovalSegment {
-  start: number;  // segundos
+  start: number;
   end: number;
   reason: 'silence' | 'filler';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MÓDULO 1 — SILENCEDETECT via FFmpeg
-//
-// Usa o filtro silencedetect nativo do FFmpeg para detectar trechos de áudio
-// abaixo de um limiar de dB por um mínimo de segundos.
-// Retorna apenas pausas DENTRO de segmentos de fala — não os inícios/fins.
+// MÓDULO SILENCEDETECT + FILLER REMOVAL (inalterado)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface SilenceRange {
-  start: number;
-  end: number;
-}
+interface SilenceRange { start: number; end: number; }
 
 async function detectSilences(
   audioPath: string,
-  opts: {
-    noiseDb?: number;       // limiar de dB (default: -35 dB)
-    minDuration?: number;   // duração mínima de silêncio em segundos (default: 1.5s)
-    totalDuration: number;
-  }
+  opts: { noiseDb?: number; minDuration?: number; totalDuration: number }
 ): Promise<SilenceRange[]> {
-  const noiseDb      = opts.noiseDb      ?? -35;
-  const minDuration  = opts.minDuration  ?? 1.5;
+  const noiseDb = opts.noiseDb ?? -35;
+  const minDuration = opts.minDuration ?? 1.5;
   const { totalDuration } = opts;
 
-  // FFmpeg silencedetect grava no stderr, não no stdout
   const ffprobeCmd = new Deno.Command('ffmpeg', {
-    args: [
-      '-i', audioPath,
-      '-af', `silencedetect=noise=${noiseDb}dB:duration=${minDuration}`,
-      '-f', 'null', '-'
-    ],
-    stderr: 'piped',
-    stdout: 'null',
+    args: ['-i', audioPath, '-af', `silencedetect=noise=${noiseDb}dB:duration=${minDuration}`, '-f', 'null', '-'],
+    stderr: 'piped', stdout: 'null',
   });
-
   const { stderr } = await ffprobeCmd.output();
   const log = new TextDecoder().decode(stderr);
 
-  // Parse do output: "silence_start: 12.34" e "silence_end: 15.67 | silence_duration: 3.33"
   const silences: SilenceRange[] = [];
   const startRe = /silence_start:\s*([\d.]+)/g;
   const endRe   = /silence_end:\s*([\d.]+)/g;
-
   const starts: number[] = [];
   const ends: number[]   = [];
 
@@ -209,24 +95,12 @@ async function detectSilences(
 
   for (let i = 0; i < starts.length; i++) {
     const s = starts[i];
-    const e = ends[i] ?? totalDuration; // silêncio que vai até o fim
-
-    // Ignora silêncio que começa nos primeiros 0.3s (intro natural)
-    // e silêncio que termina nos últimos 0.3s (outro natural)
+    const e = ends[i] ?? totalDuration;
     if (s < 0.3 || e > totalDuration - 0.3) continue;
-
     silences.push({ start: s, end: e });
   }
-
   return silences;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MÓDULO 2 — FILLER WORD REMOVAL via words[] do Whisper
-//
-// Identifica palavras de preenchimento no array words[] por regex por idioma.
-// NÃO depende do silencedetect — opera independentemente.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const FILLER_RE: Record<string, RegExp> = {
   pt: /^(hm+|hum+|ahn*|ah+|oh+|eh+|ih+|né|então|tipo|assim|sabe|cara|mano|gente|tá|certo|beleza|enfim|ué|pois\s*é|aí|ô|ó|opa|uai|e\s*aí|eai|é\s*isso|é\s*isso\s*aí|vou\s*te\s*falar|olha\s*só|sim|bom|bem)$/i,
@@ -234,62 +108,32 @@ const FILLER_RE: Record<string, RegExp> = {
   es: /^(eh+|ah+|hm+|um+|uh+|o\s*sea|pues+|bueno|este+|mhm+|tipo|ósea|digamos)$/i,
 };
 
-function detectFillerWords(
-  words: Word[],
-  lang: string
-): RemovalSegment[] {
+function detectFillerWords(words: Word[], lang: string): RemovalSegment[] {
   const re = FILLER_RE[lang] ?? FILLER_RE['pt'];
-  const segments: RemovalSegment[] = [];
-
-  for (const w of words) {
-    const normalized = w.word.trim().replace(/[.,!?;:]+$/, '');
-    if (re.test(normalized)) {
-      segments.push({ start: w.start, end: w.end + 0.05, reason: 'filler' });
-    }
-  }
-
-  return segments;
+  return words
+    .filter(w => re.test(w.word.trim().replace(/[.,!?;:]+$/, '')))
+    .map(w => ({ start: w.start, end: w.end + 0.05, reason: 'filler' as const }));
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MÓDULO 3 — MERGE + APPLY
-//
-// Recebe segmentos de silêncio (FFmpeg) e fillers (Whisper) separados,
-// une os sobrepostos, e gera:
-//   - cleanWords: words[] reindexados com timestamps ajustados
-//   - activeVideoPath: vídeo re-renderizado sem os trechos removidos
-// ─────────────────────────────────────────────────────────────────────────────
 
 function mergeRemovalSegments(segments: RemovalSegment[]): RemovalSegment[] {
   if (!segments.length) return [];
-
   const sorted = [...segments].sort((a, b) => a.start - b.start);
   const merged: RemovalSegment[] = [{ ...sorted[0] }];
-
   for (let i = 1; i < sorted.length; i++) {
     const last = merged[merged.length - 1];
     const cur  = sorted[i];
-    // Une se a distância entre eles for menor que 0.25s
     if (cur.start - last.end < 0.25) {
       last.end    = Math.max(last.end, cur.end);
-      last.reason = last.reason === cur.reason ? last.reason : 'silence'; // mixed → silence
-    } else {
-      merged.push({ ...cur });
-    }
+      last.reason = last.reason === cur.reason ? last.reason : 'silence';
+    } else { merged.push({ ...cur }); }
   }
-
   return merged;
 }
 
-// Recalcula timestamps das words após cortes no vídeo
 function adjustWordTimestamps(words: Word[], removals: RemovalSegment[]): Word[] {
   return words
-    .filter(w => {
-      // Remove words que caem inteiramente dentro de um segmento de remoção
-      return !removals.some(r => w.start >= r.start && w.end <= r.end + 0.05);
-    })
+    .filter(w => !removals.some(r => w.start >= r.start && w.end <= r.end + 0.05))
     .map(w => {
-      // Calcula quanto tempo foi removido antes desta word
       const removedBefore = removals
         .filter(r => r.end <= w.start)
         .reduce((acc, r) => acc + (r.end - r.start), 0);
@@ -301,7 +145,6 @@ function adjustWordTimestamps(words: Word[], removals: RemovalSegment[]): Word[]
     });
 }
 
-// Aplica os cortes físicos no vídeo via FFmpeg select filter
 async function applyRemovals(
   inputPath: string,
   removals: RemovalSegment[],
@@ -309,268 +152,426 @@ async function applyRemovals(
   tmpDir: string
 ): Promise<string> {
   if (!removals.length) return inputPath;
-
-  // Calcula a duração total removida — se < 2s, não vale re-renderizar
   const totalRemoved = removals.reduce((acc, r) => acc + (r.end - r.start), 0);
-  if (totalRemoved < 2.0) {
-    console.log(`applyRemovals: apenas ${totalRemoved.toFixed(1)}s a remover — pulando re-render`);
-    return inputPath;
-  }
+  if (totalRemoved < 2.0) return inputPath;
 
-  // Inverte os removals para obter os segmentos de KEEP
   const keeps: Array<{ start: number; end: number }> = [];
   let cursor = 0;
   for (const r of removals) {
-    if (r.start > cursor + 0.05) {
-      keeps.push({ start: cursor, end: r.start });
-    }
+    if (r.start > cursor + 0.05) keeps.push({ start: cursor, end: r.start });
     cursor = r.end;
   }
-  if (cursor < totalDuration - 0.05) {
-    keeps.push({ start: cursor, end: totalDuration });
-  }
-
+  if (cursor < totalDuration - 0.05) keeps.push({ start: cursor, end: totalDuration });
   if (!keeps.length) return inputPath;
 
-  // Monta o filtro select com os segmentos de keep
   const selectExpr = keeps
     .map(k => `between(t,${k.start.toFixed(3)},${k.end.toFixed(3)})`)
     .join('+');
-
   const outputPath = path.join(tmpDir, 'clean.mp4');
 
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve) => {
     ffmpeg(inputPath)
       .outputOptions([
         `-vf select='${selectExpr}',setpts=N/FRAME_RATE/TB`,
         `-af aselect='${selectExpr}',asetpts=N/SR/TB`,
         '-c:v libx264', '-preset fast', '-crf 22',
-        '-c:a aac', '-b:a 128k',
-        '-movflags +faststart',
+        '-c:a aac', '-b:a 128k', '-movflags +faststart',
       ])
       .output(outputPath)
       .on('end', () => resolve())
-      .on('error', (err) => {
-        // Se o filtro falhar (ex: muitos segmentos), usa vídeo original
-        console.warn('applyRemovals falhou no FFmpeg, usando vídeo original:', err.message);
-        resolve();
-      })
+      .on('error', () => resolve())
       .run();
   });
 
-  // Verifica integridade do arquivo gerado
   try {
     const stat = await Deno.stat(outputPath);
-    if (stat.size > 50_000) return outputPath; // > 50 KB = válido
-  } catch (_) { /* arquivo não gerado */ }
-
-  console.warn('applyRemovals: outputPath inválido, retornando inputPath');
+    if (stat.size > 50_000) return outputPath;
+  } catch (_) {}
   return inputPath;
 }
 
-// ─────────────────────────────────────────────────────────────────
-// FACE TRACKING — 5 funções puras, sem efeitos colaterais externos
-// ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MÓDULO FACE TRACKING
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface FacePoint {
-  t: number;   // timestamp em segundos
-  cx: number;  // centro X normalizado [0,1]
-  cy: number;  // centro Y normalizado [0,1]
-  w: number;   // largura normalizada [0,1]
-  h: number;   // altura normalizada [0,1]
-  conf: number;
+  t:    number;  // timestamp em segundos (relativo ao início do vídeo processado)
+  cx:   number;  // centro X normalizado [0, 1]
+  cy:   number;  // centro Y normalizado [0, 1]
+  fw:   number;  // largura do rosto normalizada [0, 1]
+  fh:   number;  // altura do rosto normalizada [0, 1]
+  conf: number;  // confiança da detecção [0, 1]
 }
 
-interface CropKeyframe {
-  t: number;
-  x: number;   // pixels absolutos
-  y: number;
-  w: number;
-  h: number;
-}
-
-// 1. Extrai 1 frame por segundo do vídeo para o tmpDir
-async function extractFrames(
+// 1 — Extrai frames do vídeo (1 fps, resolução reduzida para análise rápida)
+async function extractFramesForTracking(
   videoPath: string,
   framesDir: string,
-  fps: number = 1,
-  maxSeconds: number = 300  // analisa no máximo 5min para não estourar timeout
+  maxSeconds: number = 300   // analisa no máximo 5 min para respeitar timeout
 ): Promise<number> {
   await Deno.mkdir(framesDir, { recursive: true });
 
-  // Limita a duração analisada
-  const durationArg = maxSeconds > 0
-    ? ['-t', String(maxSeconds)]
-    : [];
+  const durationArgs = maxSeconds > 0 ? ['-t', String(maxSeconds)] : [];
 
   const { code } = await new Deno.Command('ffmpeg', {
     args: [
       '-i', videoPath,
-      ...durationArg,
-      '-vf', `fps=${fps}`,
-      '-q:v', '3',        // qualidade JPEG boa mas não máxima
-      '-s', '480x854',    // reduz resolução para análise — YuNet é rápido mesmo assim
-      path.join(framesDir, 'frame_%04d.jpg'),
-    ]
+      ...durationArgs,
+      '-vf', 'fps=1,scale=480:-2',  // 1 fps, 480px de largura, altura proporcional
+      '-q:v', '4',                   // qualidade JPEG razoável, arquivo menor
+      path.join(framesDir, 'f%04d.jpg'),
+    ],
+    stdout: 'null',
+    stderr: 'null',
   }).output();
 
   if (code !== 0) return 0;
 
-  // Conta quantos frames foram extraídos
   let count = 0;
-  for await (const _ of Deno.readDir(framesDir)) count++;
+  try {
+    for await (const _ of Deno.readDir(framesDir)) count++;
+  } catch (_) {}
   return count;
 }
 
-// 2. Chama o script Python de detecção via subprocess
-async function detectFaces(
+// 2 — Chama o script Python detect-faces.py via subprocess
+async function runFaceDetector(
   framesDir: string,
-  outputJson: string,
+  facesJsonPath: string,
   videoW: number,
   videoH: number
 ): Promise<FacePoint[]> {
-  // Localiza o script Python no mesmo diretório da função
-  const scriptPath = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    'detect-faces.py'
-  );
+  // O script Python está no mesmo diretório da Edge Function
+  const scriptDir  = path.dirname(new URL(import.meta.url).pathname);
+  const scriptPath = path.join(scriptDir, 'detect-faces.py');
+
+  // Verifica se o script existe
+  try { await Deno.stat(scriptPath); } catch (_) {
+    console.warn('detect-faces.py não encontrado em:', scriptPath);
+    return [];
+  }
 
   const { code, stdout, stderr } = await new Deno.Command('python3', {
     args: [
       scriptPath,
-      '--frames', framesDir,
-      '--out', outputJson,
-      '--video-w', String(videoW),
-      '--video-h', String(videoH),
-      '--confidence', '0.55',
-      '--fps', '1',
-    ]
+      '--frames',     framesDir,
+      '--out',        facesJsonPath,
+      '--video-w',    String(videoW),
+      '--video-h',    String(videoH),
+      '--confidence', '0.50',
+      '--fps',        '1',
+    ],
   }).output();
 
   if (code !== 0) {
     const errText = new TextDecoder().decode(stderr);
-    console.warn('detectFaces falhou:', errText);
+    console.warn('detect-faces.py saiu com código', code, ':', errText.slice(0, 200));
     return [];
   }
 
+  // O script escreve o JSON no arquivo e um resumo no stdout
   try {
-    const raw = JSON.parse(new TextDecoder().decode(stdout));
-    if (raw.error) { console.warn('detectFaces error:', raw.error); return []; }
-  } catch (_) {}
-
-  try {
-    const result = JSON.parse(await Deno.readTextFile(outputJson));
-    return (result.faces ?? []) as FacePoint[];
-  } catch (_) {
+    const jsonText = await Deno.readTextFile(facesJsonPath);
+    const parsed = JSON.parse(jsonText);
+    console.log(
+      `Face tracking: ${parsed.faces_found ?? 0} rostos` +
+      ` em ${parsed.total_frames ?? 0} frames`
+    );
+    return (parsed.faces ?? []) as FacePoint[];
+  } catch (e) {
+    console.warn('Falha ao ler faces.json:', e);
     return [];
   }
 }
 
-// 3. Aplica moving average na trajetória (elimina jitter sem lag)
-function smoothFaceTrack(
-  faces: FacePoint[],
-  windowSecs: number = 3
-): FacePoint[] {
-  if (faces.length < 3) return faces;
-
-  const smoothed: FacePoint[] = [];
-  for (let i = 0; i < faces.length; i++) {
-    const nearby = faces.filter(f => Math.abs(f.t - faces[i].t) <= windowSecs / 2);
-    const avg = (key: keyof FacePoint) =>
-      nearby.reduce((s, f) => s + (f[key] as number), 0) / nearby.length;
-    smoothed.push({
-      t:    faces[i].t,
-      cx:   avg('cx'),
-      cy:   avg('cy'),
-      w:    avg('w'),
-      h:    avg('h'),
-      conf: faces[i].conf,
-    });
-  }
-  return smoothed;
-}
-
-// 4. Converte posições de face em keyframes de crop para FFmpeg
-// Para 9:16: mantém largura total (iw) e define apenas Y (centraliza vertically no rosto)
-// Para 16:9: mantém altura total (ih) e define X (centraliza horizontally no rosto)
-function buildCropKeyframes(
-  faces: FacePoint[],
-  videoW: number,
-  videoH: number,
-  targetRatio: string = '9:16'
-): CropKeyframe[] {
-  const [rW, rH] = targetRatio.split(':').map(Number);
-  const isVertical = rH > rW;
-
-  return faces.map(f => {
-    const faceCx = f.cx * videoW;
-    const faceCy = f.cy * videoH;
-
-    if (isVertical) {
-      // Para 9:16: crop horizontal — centraliza a face no eixo X
-      // A largura do crop é a que cabe em 9:16 dentro do vídeo original
-      const cropW = Math.min(videoW, Math.round(videoH * (9 / 16)));
-      const targetX = Math.round(faceCx - cropW / 2);
-      const x = Math.max(0, Math.min(videoW - cropW, targetX));
-
-      return { t: f.t, x, y: 0, w: cropW, h: videoH };
-    } else {
-      // Para 16:9: crop vertical — centraliza a face no eixo Y
-      const cropH = Math.min(videoH, Math.round(videoW * (9 / 16)));
-      const targetY = Math.round(faceCy - cropH / 2);
-      const y = Math.max(0, Math.min(videoH - cropH, targetY));
-
-      return { t: f.t, x: 0, y, w: videoW, h: cropH };
-    }
+// 3 — Suaviza a trajetória do rosto com média móvel (elimina jitter)
+function smoothTrack(faces: FacePoint[], windowSec: number = 2.5): FacePoint[] {
+  if (faces.length < 2) return faces;
+  return faces.map((f, i) => {
+    const near = faces.filter(g => Math.abs(g.t - f.t) <= windowSec / 2);
+    const avg  = (key: keyof FacePoint) =>
+      near.reduce((s, g) => s + (g[key] as number), 0) / near.length;
+    return { t: f.t, cx: avg('cx'), cy: avg('cy'), fw: avg('fw'), fh: avg('fh'), conf: f.conf };
   });
 }
 
-// 5. Gera arquivo sendcmd.txt para FFmpeg com os keyframes de crop
+// 4 — Converte posições de rosto em parâmetros de crop absolutos (pixels)
+//     Para 9:16: o vídeo já está em 1080×1920 — centraliza X no rosto, Y fixo
+//     Para 16:9: o vídeo já está em 1920×1080 — centraliza Y no rosto, X fixo
+//     Para 1:1:  centraliza X e Y no rosto, crop quadrado
+function faceToAbsoluteCrop(
+  face: FacePoint,
+  vW: number,
+  vH: number,
+  targetRatio: string
+): { x: number; y: number; w: number; h: number } {
+  const [rW, rH] = targetRatio.split(':').map(Number);
+  const faceCX   = Math.round(face.cx * vW);
+  const faceCY   = Math.round(face.cy * vH);
+
+  // Padding extra acima do rosto (mostra um pouco da cabeça)
+  const HEAD_PADDING = Math.round(face.fh * vH * 0.6);
+
+  if (rH > rW) {
+    // 9:16 — vídeo já está na altura correta, cropamos a largura
+    const cropW = Math.min(vW, Math.round(vH * rW / rH));
+    const rawX  = faceCX - Math.round(cropW / 2);
+    const x     = Math.max(0, Math.min(vW - cropW, rawX));
+    return { x, y: 0, w: cropW, h: vH };
+  } else if (rW > rH) {
+    // 16:9 — cropamos a altura
+    const cropH = Math.min(vH, Math.round(vW * rH / rW));
+    const rawY  = (faceCY - HEAD_PADDING) - Math.round(cropH * 0.35);
+    const y     = Math.max(0, Math.min(vH - cropH, rawY));
+    return { x: 0, y, w: vW, h: cropH };
+  } else {
+    // 1:1 — crop quadrado centralizado no rosto
+    const side = Math.min(vW, vH);
+    const rawX = faceCX - Math.round(side / 2);
+    const rawY = (faceCY - HEAD_PADDING) - Math.round(side * 0.35);
+    const x    = Math.max(0, Math.min(vW - side, rawX));
+    const y    = Math.max(0, Math.min(vH - side, rawY));
+    return { x, y, w: side, h: side };
+  }
+}
+
+// 5 — Gera o arquivo sendcmd.txt para FFmpeg
+//     Formato: "TEMPO crop x X, crop y Y, crop w W, crop h H;"
 async function writeSendcmd(
-  keyframes: CropKeyframe[],
-  sendcmdPath: string
-): Promise<void> {
-  if (!keyframes.length) return;
+  faces: FacePoint[],
+  sendcmdPath: string,
+  vW: number,
+  vH: number,
+  targetRatio: string,
+  clipStartS: number,  // timestamp de início do clip no vídeo fonte
+  clipEndS: number
+): Promise<boolean> {
+  // Filtra apenas os rostos dentro da janela do clip
+  const inWindow = faces.filter(f => f.t >= clipStartS - 0.5 && f.t <= clipEndS + 0.5);
+  if (inWindow.length < 2) return false;
 
   const lines: string[] = [];
-  for (const kf of keyframes) {
-    // Formato: TIMESTAMP crop x VALOR, crop y VALOR, crop w VALOR, crop h VALOR;
-    lines.push(
-      `${kf.t.toFixed(3)} crop x ${kf.x},` +
-      ` crop y ${kf.y},` +
-      ` crop w ${kf.w},` +
-      ` crop h ${kf.h};`
-    );
+  for (const face of inWindow) {
+    const { x, y, w, h } = faceToAbsoluteCrop(face, vW, vH, targetRatio);
+    // Timestamp relativo ao início do clip
+    const relT = Math.max(0, face.t - clipStartS);
+    lines.push(`${relT.toFixed(3)} crop x ${x}, crop y ${y}, crop w ${w}, crop h ${h};`);
   }
 
   await Deno.writeTextFile(sendcmdPath, lines.join('\n'));
+  return true;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FACE DETECTION — Google Vision API (fallback quando Python indisponível)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Verifica se python3 está disponível no container uma única vez.
+// Cache em módulo — só testa na primeira chamada.
+let _pythonAvailableCache: boolean | null = null;
+
+async function pythonAvailable(): Promise<boolean> {
+  if (_pythonAvailableCache !== null) return _pythonAvailableCache;
+  try {
+    const { code } = await new Deno.Command('python3', {
+      args: ['--version'],
+      stdout: 'null',
+      stderr: 'null',
+    }).output();
+    _pythonAvailableCache = code === 0;
+  } catch (_) {
+    _pythonAvailableCache = false;
+  }
+  return _pythonAvailableCache;
+}
+
+// Detecta rostos via Google Vision API usando frames JPEG já extraídos.
+// Retorna FacePoint[] com a mesma forma que detectFaces() —
+// substituto direto quando Python não está disponível.
+//
+// Custo aproximado: $0.0015 por imagem (Vision API, tier FACE_DETECTION).
+// Com maxFrames=60 → máx $0.09 por processamento.
+//
+// Documentação: https://cloud.google.com/vision/docs/faces
+async function detectFacesVisionAPI(
+  framesDir: string,
+  videoW: number,
+  videoH: number,
+  maxFrames: number = 60   // limite de custo: ~$0.09 por job
+): Promise<FacePoint[]> {
+  const apiKey = Deno.env.get('GOOGLE_API_KEY');
+  if (!apiKey) {
+    console.log('Face tracking Vision API: GOOGLE_API_KEY não configurado — pulando');
+    return [];
+  }
+
+  // Coleta os frames disponíveis (ordenados por nome)
+  const entries: string[] = [];
+  try {
+    for await (const e of Deno.readDir(framesDir)) {
+      if (e.name.endsWith('.jpg')) entries.push(e.name);
+    }
+  } catch (_) { return []; }
+
+  entries.sort();
+
+  // Amostra uniforme se houver mais frames do que o limite
+  // Ex: 300 frames, maxFrames=60 → pega 1 a cada 5
+  const step = entries.length > maxFrames ? Math.ceil(entries.length / maxFrames) : 1;
+  const sampled = entries.filter((_, i) => i % step === 0).slice(0, maxFrames);
+
+  if (sampled.length === 0) return [];
+
+  console.log(`Face tracking Vision API: analisando ${sampled.length} frames (step=${step})`);
+
+  const results: FacePoint[] = [];
+  let apiErrors = 0;
+
+  for (let i = 0; i < sampled.length; i++) {
+    const fname = sampled[i];
+    // Índice original no array total → timestamp em segundos (1 fps)
+    const originalIdx = entries.indexOf(fname);
+    const t = originalIdx; // 1fps → índice == segundos
+
+    try {
+      const imgBytes = Deno.readFileSync(`${framesDir}/${fname}`);
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(imgBytes)));
+
+      const res = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requests: [{
+              image: { content: b64 },
+              features: [{ type: 'FACE_DETECTION', maxResults: 5 }],
+            }],
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        apiErrors++;
+        // Se muitos erros consecutivos, para de chamar (evita custo)
+        if (apiErrors >= 5) {
+          console.warn('Vision API: muitos erros consecutivos — abortando');
+          break;
+        }
+        continue;
+      }
+
+      apiErrors = 0; // reset se voltou a funcionar
+      const data = await res.json();
+      const annotations = data.responses?.[0]?.faceAnnotations ?? [];
+
+      if (annotations.length === 0) continue;
+
+      // Usa a face com maior confiança de detecção
+      // Vision API ordena por confiança decrescente — primeira é a melhor
+      const best = annotations[0];
+
+      // boundingPoly: polígono ao redor do rosto
+      // fdBoundingPoly: polígono mais apertado (skin/feature bounding)
+      // Preferimos fdBoundingPoly quando disponível — mais preciso para crop
+      const poly = best.fdBoundingPoly ?? best.boundingPoly;
+      const verts = poly?.vertices ?? [];
+
+      if (verts.length < 3) continue;
+
+      // Calcula bounding box a partir dos vértices
+      const xs = verts.map((v: { x?: number }) => v.x ?? 0);
+      const ys = verts.map((v: { y?: number }) => v.y ?? 0);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const maxX = Math.max(...xs);
+      const maxY = Math.max(...ys);
+      const bw   = maxX - minX;
+      const bh   = maxY - minY;
+
+      // Vision API retorna coordenadas no espaço do frame extraído (480×854 ou similar)
+      // Precisamos normalizar para [0,1] em relação ao vídeo real (videoW × videoH)
+      // Os frames foram extraídos com -s 480x854, então o espaço dos verts é 480×854
+      const frameW = 480;
+      const frameH = 854;
+
+      // Fator de escala do frame para o vídeo original
+      const scaleX = videoW / frameW;
+      const scaleY = videoH / frameH;
+
+      // Mapeia para o vídeo original e normaliza
+      const cx = ((minX + bw / 2) * scaleX) / videoW;
+      const cy = ((minY + bh / 2) * scaleY) / videoH;
+      const fw = (bw * scaleX) / videoW;
+      const fh = (bh * scaleY) / videoH;
+
+      // Converte likelihood string da Vision API para score numérico
+      const likelihoodMap: Record<string, number> = {
+        VERY_LIKELY: 0.95,
+        LIKELY: 0.80,
+        POSSIBLE: 0.60,
+        UNLIKELY: 0.30,
+        VERY_UNLIKELY: 0.10,
+        UNKNOWN: 0.50,
+      };
+      const conf = likelihoodMap[best.detectionConfidence ?? 'UNKNOWN'] ??
+                   parseFloat(best.detectionConfidence ?? '0.5');
+
+      results.push({
+        t:    round3(t),
+        cx:   round4(Math.max(0, Math.min(1, cx))),
+        cy:   round4(Math.max(0, Math.min(1, cy))),
+        fw:   round4(Math.max(0, Math.min(1, fw))),
+        fh:   round4(Math.max(0, Math.min(1, fh))),
+        conf: round3(conf),
+      });
+
+      // Pequena pausa entre requisições para respeitar rate limit da Vision API
+      // (600 req/min no tier free, >1000/min no pago — 50ms é mais que suficiente)
+      if (i < sampled.length - 1) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+    } catch (frameErr) {
+      console.warn(`Vision API: erro no frame ${fname}:`, frameErr);
+    }
+  }
+
+  console.log(`Face tracking Vision API: ${results.length}/${sampled.length} frames com rosto`);
+  return results;
+}
+
+function round3(n: number): number { return Math.round(n * 1000) / 1000; }
+function round4(n: number): number { return Math.round(n * 10000) / 10000; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVE — PIPELINE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
-  // Rota de health check — testar se Python + OpenCV estão disponíveis
-  if (req.method === 'GET' && new URL(req.url).searchParams.get('check') === 'face') {
-    try {
-      const { code, stdout } = await new Deno.Command('python3', {
-        args: ['-c', 'import cv2; print(cv2.__version__)']
-      }).output();
-      const version = new TextDecoder().decode(stdout).trim();
-      return new Response(JSON.stringify({
-        python: code === 0,
-        opencv: code === 0 ? version : null,
-        yunet: false, // verificar depois com path real
-      }), { headers: { 'Content-Type': 'application/json' } });
-    } catch (e) {
-      return new Response(JSON.stringify({ python: false, error: e.message }), {
-        status: 200, headers: { 'Content-Type': 'application/json' }
-      });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  // ── Health check: verifica se Python + OpenCV estão disponíveis ──
+  if (req.method === 'GET') {
+    const check = new URL(req.url).searchParams.get('check');
+    if (check === 'face') {
+      try {
+        const { code, stdout } = await new Deno.Command('python3', {
+          args: ['-c', 'import cv2; print(cv2.__version__)'],
+        }).output();
+        const version = new TextDecoder().decode(stdout).trim();
+        return new Response(
+          JSON.stringify({ python: code === 0, opencv: code === 0 ? version : null }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ python: false, error: String(e) }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
   }
-
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -594,7 +595,7 @@ serve(async (req) => {
 
     // ── 2. Verificar perfil e créditos ────────────────────────────
     const { data: profile } = await supabase
-      .from('profiles').select('credits, plan, brand_prefs').eq('id', user_id).single();
+      .from('profiles').select('credits, plan').eq('id', user_id).single();
     if (!profile) throw new Error('Perfil não encontrado');
 
     tmpDir = await Deno.makeTempDir();
@@ -616,44 +617,40 @@ serve(async (req) => {
       const isZoom    = url.includes('zoom.us/rec/') || url.includes('zoom.us/share/');
 
       if (isZoom) {
-        throw new Error('Gravações do Zoom precisam ser baixadas manualmente. Links do Zoom requerem autenticação.');
+        throw new Error('Gravações do Zoom precisam ser baixadas manualmente.');
       } else if (isDrive) {
         const fileId = url.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-        if (!fileId) throw new Error('ID do arquivo Google Drive não encontrado na URL');
+        if (!fileId) throw new Error('ID do Google Drive não encontrado na URL');
         const key = Deno.env.get('GOOGLE_API_KEY');
         if (!key) throw new Error('GOOGLE_API_KEY não configurado');
         const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${key}`);
-        if (!res.ok) throw new Error(`Google Drive download falhou: ${res.status}. O arquivo precisa ser público.`);
+        if (!res.ok) throw new Error(`Google Drive download falhou: ${res.status}`);
         Deno.writeFileSync(videoPath, new Uint8Array(await res.arrayBuffer()));
         videoReady = true;
       } else {
-        // YouTube, Twitch e qualquer outra plataforma via yt-dlp
         const ytArgs = isYouTube || isTwitch
           ? ['--no-playlist', '--format', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]', '--merge-output-format', 'mp4', '--output', videoPath, url]
           : ['--no-playlist', '--format', 'mp4/best', '--output', videoPath, url];
         const { code } = await new Deno.Command('yt-dlp', { args: ytArgs }).output();
-        if (code !== 0) throw new Error(`Falha ao baixar vídeo via yt-dlp: ${url}`);
+        if (code !== 0) throw new Error(`Falha ao baixar vídeo: ${url}`);
         videoReady = true;
       }
     }
-
     if (!videoReady) throw new Error('Nenhuma fonte de vídeo disponível');
 
     // ── 4. ffprobe: duração real ──────────────────────────────────
     let durationSeconds = 300;
     try {
       const { stdout } = await new Deno.Command('ffprobe', {
-        args: ['-v', 'quiet', '-print_format', 'json', '-show_format', videoPath]
+        args: ['-v', 'quiet', '-print_format', 'json', '-show_format', videoPath],
       }).output();
-      const info = JSON.parse(new TextDecoder().decode(stdout));
-      durationSeconds = parseFloat(info.format?.duration ?? '300');
-    } catch (_) { console.warn('ffprobe falhou, usando fallback 300s'); }
+      durationSeconds = parseFloat(JSON.parse(new TextDecoder().decode(stdout)).format?.duration ?? '300');
+    } catch (_) {}
 
     const creditCost = calcCreditCost(durationSeconds);
     if (profile.credits !== -1 && profile.credits < creditCost) {
-      throw new Error(`Créditos insuficientes: precisa de ${creditCost}, tem ${profile.credits}`);
+      throw new Error(`Créditos insuficientes: precisa ${creditCost}, tem ${profile.credits}`);
     }
-
     await supabase.from('projects')
       .update({ duration_seconds: Math.round(durationSeconds) })
       .eq('id', project_id);
@@ -662,85 +659,84 @@ serve(async (req) => {
     const targetRatio = project.ratio || '9:16';
     const [rW, rH] = targetRatio.split(':').map(Number);
     let sourceVideoPath = videoPath;
+    let videoW = 1080;
+    let videoH = 1920;
 
     if (rW && rH) {
-      const targetW    = rH > rW ? 1080 : 1920;
-      const targetH    = rH > rW ? 1920 : 1080;
-      const scaleFilter = `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black`;
-      const convertedPath = path.join(tmpDir, 'converted.mp4');
+      videoW = rH > rW ? 1080 : 1920;
+      videoH = rH > rW ? 1920 : 1080;
+      if (rW === rH) { videoW = 1080; videoH = 1080; }
 
+      const scaleFilter  = `scale=${videoW}:${videoH}:force_original_aspect_ratio=decrease,pad=${videoW}:${videoH}:(ow-iw)/2:(oh-ih)/2:black`;
+      const convertedPath = path.join(tmpDir, 'converted.mp4');
       await new Promise<void>((resolve, reject) => {
         ffmpeg(videoPath)
           .outputOptions([`-vf ${scaleFilter}`, '-c:a copy', '-movflags +faststart'])
           .output(convertedPath)
-          .on('end', resolve)
-          .on('error', reject)
-          .run();
+          .on('end', resolve).on('error', reject).run();
       });
       sourceVideoPath = convertedPath;
     }
 
-    // ── Face tracking (inicializa como null — preenchido adiante) ──
-    let sendcmdPath: string | null = null;
-    let faceTrackEnabled = false;
-    const framesDir    = path.join(tmpDir, 'frames');
-    const facesJsonPath= path.join(tmpDir, 'faces.json');
-
-    // ── 5.5. Face tracking (planos starter+, vídeos com rosto) ────
+    // ── 5.5. Face tracking ────────────────────────────────────────
     //
-    // Analisa 1fps nos primeiros 5min do vídeo para detectar posição do rosto.
-    // Gera um arquivo sendcmd.txt usado pelo FFmpeg no render de cada clip.
-    // Fallback: se não detectar rostos, usa o scale+pad atual (sem mudança).
+    // Ativa para planos pagos. Processo:
+    //   a) Extrai 1fps como JPEGs (máx 300 frames = 5 min)
+    //   b) Python + YuNet/Haar detecta rostos por frame → JSON
+    //   c) Smooth da trajetória (moving average 2.5s)
+    //   d) No render, gera sendcmd.txt por clip → crop dinâmico FFmpeg
     //
-    const enableFaceTracking = profile.plan !== 'free' && durationSeconds <= 1800;
+    // Falha não cancela o processamento — usa scale+pad como fallback.
+    // ─────────────────────────────────────────────────────────────
 
-    if (enableFaceTracking) {
+    const isPaid             = profile.plan !== 'free';
+    const framesDir          = path.join(tmpDir, 'frames');
+    const facesJsonPath      = path.join(tmpDir, 'faces.json');
+    let   smoothedFaces: FacePoint[] = [];
+    let   faceTrackEnabled   = false;
+
+    if (isPaid) {
       try {
-        console.log('Face tracking: extraindo frames...');
-        const frameCount = await extractFrames(
-          sourceVideoPath,
-          framesDir,
-          1,           // 1 fps
-          300          // máximo 5 minutos
-        );
+        const frameCount = await extractFramesForTracking(sourceVideoPath, framesDir, 300);
+        console.log(`Face tracking: extraídos ${frameCount} frames`);
 
         if (frameCount > 2) {
-          console.log(`Face tracking: ${frameCount} frames, detectando rostos...`);
+          // ── Tenta Python primeiro, Vision API como fallback ──────
+          let rawFaces: FacePoint[] = [];
+          const hasPython = await pythonAvailable();
 
-          const [targetW, targetH] = (() => {
-            const [rW, rH] = (project.ratio || '9:16').split(':').map(Number);
-            const isVertical = rH > rW;
-            return isVertical ? [1080, 1920] : [1920, 1080];
-          })();
+          if (hasPython) {
+            console.log('Face tracking: usando Python/YuNet');
+            rawFaces = await runFaceDetector(framesDir, facesJsonPath, videoW, videoH);
+          }
 
-          const rawFaces = await detectFaces(framesDir, facesJsonPath, targetW, targetH);
+          // Fallback Vision API se:
+          //   a) Python não disponível, OU
+          //   b) Python disponível mas não detectou rostos suficientes
+          if (rawFaces.length < 3 && Deno.env.get('GOOGLE_API_KEY')) {
+            const reason = hasPython
+              ? `Python retornou ${rawFaces.length} rostos — tentando Vision API`
+              : 'Python indisponível — usando Vision API';
+            console.log(`Face tracking: ${reason}`);
+            rawFaces = await detectFacesVisionAPI(framesDir, videoW, videoH);
+          }
 
           if (rawFaces.length > 2) {
-            const smoothedFaces = smoothFaceTrack(rawFaces, 3);
-            const keyframes = buildCropKeyframes(
-              smoothedFaces,
-              targetW,
-              targetH,
-              project.ratio || '9:16'
+            smoothedFaces    = smoothTrack(rawFaces, 2.5);
+            faceTrackEnabled = true;
+            console.log(
+              `Face tracking ativo: ${rawFaces.length} rostos, ` +
+              `backend=${hasPython && rawFaces.length >= 3 ? 'python' : 'vision-api'}`
             );
-
-            if (keyframes.length > 0) {
-              sendcmdPath = path.join(tmpDir, 'sendcmd.txt');
-              await writeSendcmd(keyframes, sendcmdPath);
-              faceTrackEnabled = true;
-              console.log(`Face tracking: ${rawFaces.length} rostos detectados, crop dinâmico ativo`);
-            } else {
-              console.log('Face tracking: keyframes vazios — usando scale+pad padrão');
-            }
           } else {
-            console.log(`Face tracking: poucos rostos detectados (${rawFaces.length}) — usando scale+pad padrão`);
+            console.log(`Face tracking: ${rawFaces.length} rostos insuficientes — scale+pad`);
           }
         } else {
-          console.log('Face tracking: poucos frames extraídos — usando scale+pad padrão');
+          console.log('Face tracking: poucos frames — scale+pad');
         }
-      } catch (trackErr) {
-        console.warn('Face tracking falhou (não crítico):', trackErr);
-        // Não falha o processamento — face tracking é melhoria opcional
+      } catch (ftErr) {
+        // Face tracking é opcional — nunca cancela o job
+        console.warn('Face tracking falhou (não crítico):', ftErr);
       }
     }
 
@@ -754,12 +750,11 @@ serve(async (req) => {
         .audioChannels(1)
         .audioBitrate('64k')
         .save(audioPath)
-        .on('end', resolve)
-        .on('error', reject);
+        .on('end', resolve).on('error', reject);
     });
 
     // ── 7. Whisper: transcrição com timestamps por palavra ─────────
-    const openai   = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
+    const openai    = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
     const audioFile = new File([Deno.readFileSync(audioPath)], 'audio.mp3', { type: 'audio/mpeg' });
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
@@ -772,106 +767,54 @@ serve(async (req) => {
 
     const words: Word[] = transcription.words ?? [];
     const fullText = transcription.text;
-
     if (!fullText || fullText.trim().length < 50) {
       throw new Error('Transcrição muito curta ou sem fala detectada');
     }
 
-    // ── 8. SILENCE DETECTION + FILLER REMOVAL ─────────────────────
-    //
-    // Só aplica em planos pagos (starter+).
-    // free: skip — economia de CPU e tempo de processamento.
-    //
-    // Pipeline:
-    //   8a. silencedetect → pausas longas (FFmpeg, opera no áudio)
-    //   8b. filler words  → vocais/vícios de linguagem (Whisper words[])
-    //   8c. merge         → une os dois, remove sobrepostos
-    //   8d. applyRemovals → re-render FFmpeg com select filter
-    //   8e. adjustWords   → reindexar timestamps do SRT
-    // ──────────────────────────────────────────────────────────────
-
-    const isPaid = profile.plan !== 'free';
+    // ── 8. Silence detection + filler removal ─────────────────────
     let activeVideoPath = sourceVideoPath;
     let activeWords: Word[] = words;
-    let silencesRemoved  = 0;
-    let fillersRemoved   = 0;
-    let secondsSaved     = 0;
+    let silencesRemoved = 0;
+    let fillersRemoved  = 0;
+    let secondsSaved    = 0;
 
     if (isPaid && words.length > 10) {
       const lang = (['pt','en','es'].includes(project.lang) ? project.lang : 'pt') as string;
 
-      // 8a — silencedetect FFmpeg
-      // Limiar -35dB remove silêncios reais sem cutting respirações (que ficam por volta de -50dB)
-      // minDuration 1.5s: só remove pausas que o espectador percebe como "travamento"
-      const silenceRanges = await detectSilences(audioPath, {
-        noiseDb: -35,
-        minDuration: 1.5,
-        totalDuration: durationSeconds,
-      });
-
-      const silenceRemovals: RemovalSegment[] = silenceRanges.map(s => ({
-        start: s.start,
-        end: s.end,
-        reason: 'silence' as const,
-      }));
-
-      // 8b — filler words via Whisper words[]
+      const silenceRanges  = await detectSilences(audioPath, { noiseDb: -35, minDuration: 1.5, totalDuration: durationSeconds });
+      const silenceRemovals: RemovalSegment[] = silenceRanges.map(s => ({ start: s.start, end: s.end, reason: 'silence' as const }));
       const fillerRemovals = detectFillerWords(words, lang);
 
-      // Contadores brutos (antes do merge)
-      silencesRemoved = silenceRemovals.length;
+      silencesRemoved = silenceRanges.length;
       fillersRemoved  = fillerRemovals.length;
 
-      // 8c — merge: une os dois arrays, funde sobrepostos
       const allRemovals = mergeRemovalSegments([...silenceRemovals, ...fillerRemovals]);
+      secondsSaved = parseFloat(allRemovals.reduce((a, r) => a + (r.end - r.start), 0).toFixed(1));
 
-      secondsSaved = parseFloat(
-        allRemovals.reduce((acc, r) => acc + (r.end - r.start), 0).toFixed(1)
-      );
-
-      console.log(
-        `Cleanup: ${silencesRemoved} silêncios + ${fillersRemoved} fillers → ` +
-        `${allRemovals.length} cortes, ${secondsSaved}s removidos`
-      );
+      console.log(`Cleanup: ${silencesRemoved} silêncios + ${fillersRemoved} fillers → ${secondsSaved}s`);
 
       if (allRemovals.length > 0 && secondsSaved >= 2.0) {
-        // 8d — re-render físico do vídeo
-        activeVideoPath = await applyRemovals(
-          sourceVideoPath,
-          allRemovals,
-          durationSeconds,
-          tmpDir
-        );
-
-        // 8e — reindexar timestamps das words para o vídeo limpo
+        activeVideoPath = await applyRemovals(sourceVideoPath, allRemovals, durationSeconds, tmpDir);
         if (activeVideoPath !== sourceVideoPath) {
           activeWords = adjustWordTimestamps(words, allRemovals);
-          // Atualiza durationSeconds para o vídeo limpo
           try {
             const { stdout } = await new Deno.Command('ffprobe', {
-              args: ['-v', 'quiet', '-print_format', 'json', '-show_format', activeVideoPath]
+              args: ['-v', 'quiet', '-print_format', 'json', '-show_format', activeVideoPath],
             }).output();
-            const info = JSON.parse(new TextDecoder().decode(stdout));
-            durationSeconds = parseFloat(info.format?.duration ?? String(durationSeconds));
-          } catch (_) { /* mantém duração anterior */ }
+            durationSeconds = parseFloat(JSON.parse(new TextDecoder().decode(stdout)).format?.duration ?? String(durationSeconds));
+          } catch (_) {}
         }
       } else if (fillersRemoved > 0) {
-        // Poucos gaps: só filtra as words do SRT sem re-renderizar
-        activeWords = words.filter(w =>
-          !fillerRemovals.some(r => w.start >= r.start && w.end <= r.end + 0.05)
-        );
-        console.log(`Cleanup: só SRT limpo (${fillersRemoved} fillers), vídeo original mantido`);
+        activeWords = words.filter(w => !fillerRemovals.some(r => w.start >= r.start && w.end <= r.end + 0.05));
       }
     }
 
     // ── 9. Claude: seleciona os melhores momentos ─────────────────
-    const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
-    const maxClips  = Math.min(15, Math.max(5, Math.floor(durationSeconds / 180)));
-
-    // Reconstrói fullText limpo a partir das activeWords
+    const anthropic    = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
+    const maxClips     = Math.min(15, Math.max(5, Math.floor(durationSeconds / 180)));
     const cleanFullText = activeWords.map(w => w.word).join(' ');
 
-    const prompt = `Você é um especialista em conteúdo viral para redes sociais brasileiras (TikTok, Reels, Shorts).
+    const claudePrompt = `Você é um especialista em conteúdo viral para redes sociais brasileiras (TikTok, Reels, Shorts).
 Analise esta transcrição e selecione os ${maxClips} melhores momentos para cortes virais.
 
 TRANSCRIÇÃO COMPLETA:
@@ -901,117 +844,73 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
     const claudeRes = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: claudePrompt }],
     });
 
-    const rawJson  = claudeRes.content[0].type === 'text' ? claudeRes.content[0].text : '';
-    const jStart   = rawJson.indexOf('[');
-    const jEnd     = rawJson.lastIndexOf(']');
+    const rawJson = claudeRes.content[0].type === 'text' ? claudeRes.content[0].text : '';
+    const jStart  = rawJson.indexOf('[');
+    const jEnd    = rawJson.lastIndexOf(']');
     if (jStart === -1 || jEnd === -1) throw new Error('Claude não retornou JSON válido');
 
     const moments: Array<any> = JSON.parse(rawJson.substring(jStart, jEnd + 1));
     if (!moments.length) throw new Error('Nenhum momento selecionado pela IA');
 
-    // ── 10. Brand prefs: baixar logo localmente (uma vez, fora do loop) ──
-    const isFree    = profile.plan === 'free';
-    const brandPrefs: {
-      logo_url?: string | null;
-      brand_color?: string;
-      brand_font?: string;
-      logo_position?: string;
-      logo_size?: number;
-      cta_text?: string;
-      cta_enabled?: boolean;
-      logoLocalPath?: string;
-    } = profile.brand_prefs || {};
-
-    // Baixa o logo uma única vez para tmpDir (evita N downloads no loop)
-    if (!isFree && brandPrefs.logo_url) {
-      try {
-        const logoRes = await fetch(brandPrefs.logo_url);
-        if (logoRes.ok) {
-          const ext = brandPrefs.logo_url.split('.').pop()?.split('?')[0]?.toLowerCase() ?? 'png';
-          const logoLocalPath = path.join(tmpDir, `brand_logo.${ext}`);
-          Deno.writeFileSync(logoLocalPath, new Uint8Array(await logoRes.arrayBuffer()));
-          brandPrefs.logoLocalPath = logoLocalPath;
-          console.log(`Brand logo baixado: ${logoLocalPath}`);
-        }
-      } catch (e) {
-        console.warn('Falha ao baixar logo da marca, seguindo sem watermark personalizado:', e);
-        // Não falha o processamento — logo é opcional
-      }
-    }
-
+    // ── 10. Render de cada clip ───────────────────────────────────
+    const isFree = profile.plan === 'free';
     let successCount = 0;
 
     for (const moment of moments) {
-      const clipId   = crypto.randomUUID();
-      const clipPath = path.join(tmpDir, `${clipId}.mp4`);
-      const thumbPath= path.join(tmpDir, `${clipId}.jpg`);
-      const srtPath  = path.join(tmpDir, `${clipId}.srt`);
+      const clipId    = crypto.randomUUID();
+      const clipPath  = path.join(tmpDir, `${clipId}.mp4`);
+      const thumbPath = path.join(tmpDir, `${clipId}.jpg`);
+      const srtPath   = path.join(tmpDir, `${clipId}.srt`);
 
       try {
-        const clipWords = activeWords.filter(w =>
-          w.start >= moment.start_s && w.end <= moment.end_s + 1
-        );
+        const clipWords = activeWords.filter(w => w.start >= moment.start_s && w.end <= moment.end_s + 1);
         Deno.writeTextFileSync(srtPath, wordsToSrt(clipWords));
 
-        // Render com legendas + face tracking (se disponível)
-        await new Promise<void>((resolve, reject) => {
-          const clipDuration = moment.end_s - moment.start_s;
+        // ── Monta o -vf: face tracking + legendas ──────────────────
+        let vfFilter: string;
 
-          // Monta o filtro de vídeo com ou sem face tracking
-          let vfFilter: string;
+        if (faceTrackEnabled && smoothedFaces.length > 0) {
+          // Gera sendcmd.txt específico para este clip (timestamps relativos ao início)
+          const sendcmdPath = path.join(tmpDir, `sendcmd_${clipId}.txt`);
+          const hasSendcmd  = await writeSendcmd(
+            smoothedFaces,
+            sendcmdPath,
+            videoW, videoH,
+            targetRatio,
+            moment.start_s,
+            moment.end_s
+          );
 
-          if (faceTrackEnabled && sendcmdPath) {
-            // Com face tracking:
-            // 1. sendcmd aplica crop dinâmico baseado na posição do rosto
-            // 2. scale normaliza para a resolução alvo
-            // 3. legendas são renderizadas por cima
-            const [targetW, targetH] = (() => {
-              const [rW, rH] = (project.ratio || '9:16').split(':').map(Number);
-              return rH > rW ? [1080, 1920] : [1920, 1080];
-            })();
-
-            // Ajusta timestamps do sendcmd para serem relativos ao início do clip
-            // (sendcmd usa timestamps absolutos do vídeo fonte)
-            const adjustedSendcmdPath = path.join(tmpDir, `sendcmd_${clipId}.txt`);
-            const sendcmdContent = await Deno.readTextFile(sendcmdPath);
-
-            // Filtra apenas as linhas dentro da janela do clip e reindexar
-            const filteredLines = sendcmdContent
-              .split('\n')
-              .filter(line => {
-                const t = parseFloat(line.split(' ')[0]);
-                return t >= moment.start_s && t <= moment.end_s + 1;
-              })
-              .map(line => {
-                const parts = line.split(' ');
-                const t = parseFloat(parts[0]);
-                parts[0] = (t - moment.start_s).toFixed(3);
-                return parts.join(' ');
-              });
-
-            if (filteredLines.length > 0) {
-              await Deno.writeTextFile(adjustedSendcmdPath, filteredLines.join('\n'));
-              vfFilter = [
-                `sendcmd=f=${adjustedSendcmdPath},crop=iw:ih:0:0`,
-                `scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease`,
-                `pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black`,
-                buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs),
-              ].join(',');
-            } else {
-              // Fallback: nenhum keyframe para este clip
-              vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs);
-            }
+          if (hasSendcmd) {
+            // Filtro completo:
+            //   1. sendcmd aplica crop dinâmico baseado no rosto
+            //   2. scale normaliza para resolução alvo
+            //   3. setsar garante SAR 1:1 após crop
+            //   4. subtitles renderiza legendas
+            vfFilter = [
+              `sendcmd=f=${sendcmdPath}`,
+              `crop=iw:ih:0:0`,                             // crop inicial "neutro" (atualizado pelo sendcmd)
+              `scale=${videoW}:${videoH}:force_original_aspect_ratio=decrease`,
+              `pad=${videoW}:${videoH}:(ow-iw)/2:(oh-ih)/2:black`,
+              `setsar=1`,
+              buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree),
+            ].join(',');
           } else {
-            // Sem face tracking — comportamento atual
-            vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree, brandPrefs);
+            // Menos de 2 keyframes no clip — usa scale+pad normal
+            vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree);
           }
+        } else {
+          // Sem face tracking — comportamento existente
+          vfFilter = buildSubtitleFilter(srtPath, project.caption_style || 'hormozi', isFree);
+        }
 
+        await new Promise<void>((resolve, reject) => {
           ffmpeg(activeVideoPath)
             .setStartTime(moment.start_s)
-            .setDuration(clipDuration)
+            .setDuration(moment.end_s - moment.start_s)
             .outputOptions([
               `-vf ${vfFilter}`,
               '-c:a aac', '-b:a 128k', '-movflags +faststart',
@@ -1022,23 +921,19 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
             .run();
         });
 
-        // Thumbnail no frame 2s
         await new Promise<void>((resolve, reject) => {
           ffmpeg(clipPath)
-            .setStartTime(2).frames(1)
+            .setStartTime(Math.min(2, (moment.end_s - moment.start_s) * 0.15))
+            .frames(1)
             .output(thumbPath)
-            .on('end', resolve)
-            .on('error', reject)
-            .run();
+            .on('end', resolve).on('error', reject).run();
         });
 
-        // Upload clip
         const storagePath = `${user_id}/${project_id}/${clipId}.mp4`;
         await supabase.storage.from('clips').upload(
           storagePath, Deno.readFileSync(clipPath), { contentType: 'video/mp4' }
         );
 
-        // Upload thumbnail
         let thumbnailUrl: string | null = null;
         try {
           const thumbStorage = `${user_id}/${project_id}/${clipId}.jpg`;
@@ -1047,41 +942,34 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
           );
           const { data: { publicUrl } } = supabase.storage.from('clips').getPublicUrl(thumbStorage);
           thumbnailUrl = publicUrl;
-        } catch (_) { console.warn('Thumbnail upload falhou'); }
+        } catch (_) {}
 
-        // Insert clip
         await supabase.from('clips').insert({
-          id: clipId,
+          id:                      clipId,
           project_id,
           user_id,
-          title:          moment.title,
-          caption:        moment.caption,
-          hashtags:       moment.hashtags,
-          niche:          moment.niche,
-          start_s:        moment.start_s,
-          end_s:          moment.end_s,
-          duration:       Math.round(moment.end_s - moment.start_s),
-          score:          moment.score,
-          hook:           moment.hook,
-          storage_path:   storagePath,
-          thumbnail_url:  thumbnailUrl,
-          caption_style:  project.caption_style || 'hormozi',
-          status:         'rendered',
-          transcript: (() => {
-            const clipW = activeWords.filter(
-              (w: Word) => w.start >= moment.start_s - 0.1 && w.end <= moment.end_s + 0.5
-            );
-            return clipW.map((w: Word) => ({
-              w: w.word,
-              s: parseFloat((w.start - moment.start_s).toFixed(3)),
-              e: parseFloat((w.end   - moment.start_s).toFixed(3)),
-            }));
-          })(),
-          // ★ novos campos de cleanup
-          silences_removed:  isPaid ? silencesRemoved : 0,
-          fillers_removed:   isPaid ? fillersRemoved  : 0,
-          seconds_saved:     isPaid ? secondsSaved    : 0,
-          face_tracking_applied: faceTrackEnabled,
+          title:                   moment.title,
+          caption:                 moment.caption,
+          hashtags:                moment.hashtags,
+          niche:                   moment.niche,
+          start_s:                 moment.start_s,
+          end_s:                   moment.end_s,
+          duration:                Math.round(moment.end_s - moment.start_s),
+          score:                   moment.score,
+          hook:                    moment.hook,
+          storage_path:            storagePath,
+          thumbnail_url:           thumbnailUrl,
+          caption_style:           project.caption_style || 'hormozi',
+          status:                  'rendered',
+          silences_removed:        isPaid ? silencesRemoved : 0,
+          fillers_removed:         isPaid ? fillersRemoved  : 0,
+          seconds_saved:           isPaid ? secondsSaved    : 0,
+          face_tracking_applied:   faceTrackEnabled,
+          transcript:              clipWords.map(w => ({
+            w: w.word,
+            s: parseFloat((w.start - moment.start_s).toFixed(3)),
+            e: parseFloat((w.end   - moment.start_s).toFixed(3)),
+          })),
         });
 
         successCount++;
@@ -1090,7 +978,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
       }
     }
 
-    if (successCount === 0) throw new Error('Nenhum corte foi renderizado com sucesso');
+    if (successCount === 0) throw new Error('Nenhum corte renderizado com sucesso');
 
     // ── 11. Update projeto ────────────────────────────────────────
     await supabase.from('projects').update({
@@ -1099,6 +987,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
       silence_removal_applied: isPaid && silencesRemoved > 0,
       filler_removal_applied:  isPaid && fillersRemoved  > 0,
       total_seconds_saved:     isPaid ? secondsSaved : 0,
+      face_tracking_applied:   faceTrackEnabled,
     }).eq('id', project_id);
 
     // ── 12. Decremento de créditos ────────────────────────────────
@@ -1107,7 +996,6 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
       amount: creditCost,
     });
     if (rpcErr) {
-      console.warn('RPC decrement_credits falhou, fallback manual:', rpcErr);
       if (profile.credits !== -1) {
         await supabase.from('profiles')
           .update({ credits: Math.max(0, profile.credits - creditCost) })
@@ -1116,31 +1004,31 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
     }
 
     // ── 13. Notificação ───────────────────────────────────────────
-    const cleanupMsg = isPaid && secondsSaved > 0
-      ? ` • ${secondsSaved}s de silêncio/fillers removidos ✂️`
-      : '';
+    const extras: string[] = [];
+    if (isPaid && secondsSaved > 0) extras.push(`${secondsSaved}s removidos ✂️`);
+    if (faceTrackEnabled)           extras.push('câmera inteligente ativada 🎯');
 
     await supabase.from('notifications').insert({
       user_id,
       type:       'processing_done',
       title:      `${successCount} cortes prontos! 🎬`,
-      body:       `Seu vídeo "${project.title}" foi processado com sucesso.${cleanupMsg}`,
+      body:       `"${project.title}" processado.${extras.length ? ' • ' + extras.join(' • ') : ''}`,
       action_url: `/clips?project=${project_id}`,
     });
 
     if (tmpDir) {
-      try { await Deno.remove(tmpDir, { recursive: true }); }
-      catch (_) { console.warn('Falha ao limpar tmpDir'); }
+      try { await Deno.remove(tmpDir, { recursive: true }); } catch (_) {}
     }
 
     return new Response(
       JSON.stringify({
-        success:          true,
-        clips_count:      successCount,
-        credit_cost:      creditCost,
-        silences_removed: silencesRemoved,
-        fillers_removed:  fillersRemoved,
-        seconds_saved:    secondsSaved,
+        success:              true,
+        clips_count:          successCount,
+        credit_cost:          creditCost,
+        silences_removed:     silencesRemoved,
+        fillers_removed:      fillersRemoved,
+        seconds_saved:        secondsSaved,
+        face_tracking_applied: faceTrackEnabled,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -1154,8 +1042,7 @@ Excluir: silêncios >5s, apresentações genéricas, frases incompletas.`;
       }).eq('id', projectId);
     }
     if (tmpDir) {
-      try { await Deno.remove(tmpDir, { recursive: true }); }
-      catch (_) { console.warn('Falha ao limpar tmpDir'); }
+      try { await Deno.remove(tmpDir, { recursive: true }); } catch (_) {}
     }
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
