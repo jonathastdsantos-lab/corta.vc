@@ -70,8 +70,6 @@ function NotifDropdown({ notifications, open, onClose, onRead, lang }) {
               </div>
             ))}
           </div>
-        </div>
-      )}
     </div>
   );
 }
