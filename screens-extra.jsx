@@ -441,45 +441,7 @@ function platColor(p) {
   return { tiktok: '#111', youtube: '#ff0033', instagram: '#d6249f', x: '#111', linkedin: '#0a66c2', facebook: '#1877f2', kwai: '#ff5000' }[p] || '#888';
 }
 
-function AnalyticsScreen({ lang, user }) {
-  const [stats, setStats] = useState(null);
+// AnalyticsScreen is defined and exported from app.jsx
 
-  useEffect(() => {
-    async function load() {
-      if (!window.Supa?.client) return;
-      const { count: clipsCount } = await window.Supa.client.from('clips').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
-      const { count: projectsCount } = await window.Supa.client.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
-      const { count: scheduleCount } = await window.Supa.client.from('schedule').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
-      setStats({ clips: clipsCount || 0, projects: projectsCount || 0, schedules: scheduleCount || 0 });
-    }
-    load();
-  }, [user]);
 
-  return (
-    <div className="page page-wide fade-up">
-      <div className="section-head fade-up">
-        <div>
-          <div className="h-eyebrow">Insights</div>
-          <h1 className="h1">{lang === 'en' ? 'Analytics' : 'Métricas'}</h1>
-          <p className="sub">{lang === 'en' ? 'Track your content performance' : 'Acompanhe o desempenho do seu conteúdo'}</p>
-        </div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginTop: 24 }}>
-        <div className="card" style={{ padding: 24 }}>
-          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Total Projects' : 'Total de Projetos'}</div>
-          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.projects : '...'}</div>
-        </div>
-        <div className="card" style={{ padding: 24 }}>
-          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Clips Generated' : 'Cortes Gerados'}</div>
-          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.clips : '...'}</div>
-        </div>
-        <div className="card" style={{ padding: 24 }}>
-          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Posts Scheduled' : 'Agendamentos'}</div>
-          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.schedules : '...'}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-Object.assign(window, { TemplatesScreen, ScheduleScreen, AnalyticsScreen, nicheIcon, platColor });
+Object.assign(window, { TemplatesScreen, ScheduleScreen, nicheIcon, platColor });
