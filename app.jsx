@@ -77,6 +77,7 @@ function NotifDropdown({ notifications, open, onClose, onRead, lang }) {
 }
 
 function App() {
+  const { TemplatesScreen, ScheduleScreen, AnalyticsScreen } = window;
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const lang = t.lang === 'en' ? 'en' : 'pt';
   const T = STR[lang];
