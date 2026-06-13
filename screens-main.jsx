@@ -400,7 +400,7 @@ function ProcessingScreen({ lang, go, project }) {
   );
 }
 
-function ClipsScreen({ lang, go, project, openClip }) {
+function ClipsScreen({ lang, go, project, openClip, user }) {
   const T = STR[lang];
   const [clips, setClips] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -409,6 +409,7 @@ function ClipsScreen({ lang, go, project, openClip }) {
   const [nicheFilter, setNicheFilter] = useState('all');
   const [selected, setSelected] = useState(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [dlLoadingId, setDlLoadingId] = useState(null); // id do clip sendo baixado
 
   function toggleSelect(id) {
     const next = new Set(selected);
@@ -419,21 +420,43 @@ function ClipsScreen({ lang, go, project, openClip }) {
 
   useEffect(() => {
     async function load() {
-      if (!Supa.client || !project?.id) {
+      setLoading(true);
+
+      if (!Supa.client) {
+        // Modo demo: sempre usa mock
         setClips(window.CLIPS || []);
         setLoading(false);
         return;
       }
-      const { data } = await Supa.client
-        .from('clips')
-        .select('*')
-        .eq('project_id', project.id)
-        .order('score', { ascending: false });
-      setClips(data || []);
+
+      if (project?.id) {
+        // Modo projeto: busca clips deste projeto específico
+        const { data } = await Supa.client
+          .from('clips')
+          .select('*')
+          .eq('project_id', project.id)
+          .order('score', { ascending: false });
+        setClips(data || []);
+      } else if (user?.id) {
+        // Modo "todos os cortes": busca todos os clips do usuário
+        // (sidebar → Cortes sem ter aberto um projeto)
+        const { data } = await Supa.client
+          .from('clips')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('status', 'rendered')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        setClips(data || []);
+      } else {
+        // Fallback final: sem usuário logado → demo
+        setClips(window.CLIPS || []);
+      }
+
       setLoading(false);
     }
     load();
-  }, [project]);
+  }, [project, user]);
 
   const filtered = useMemo(() => {
     let arr = [...clips];
@@ -446,25 +469,54 @@ function ClipsScreen({ lang, go, project, openClip }) {
 
   async function dl(clip, e) {
     e.stopPropagation();
-    if (!Supa.client) { window.showToast('Funcionalidade indisponível no modo demo', { type: 'info' }); return; }
+
+    if (!Supa.client) {
+      window.showToast(
+        lang === 'en' ? 'Demo mode — download unavailable' : 'Modo demo — download indisponível',
+        { type: 'info' }
+      );
+      return;
+    }
+
+    if (dlLoadingId) return; // impede clique duplo enquanto outro download roda
+
+    setDlLoadingId(clip.id);
     try {
-      e.target.innerText = '...';
-      const { data } = await Supa.client.storage.from('clips').download(clip.storage_path);
+      const { data, error } = await Supa.client.storage
+        .from('clips')
+        .download(clip.storage_path);
+
+      if (error) throw error;
+
       const url = URL.createObjectURL(data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `corta-vc-${clip.title.replace(/\W+/g, '-')}.mp4`;
+      const a   = document.createElement('a');
+      a.href     = url;
+      a.download = `corta-vc-${clip.title.replace(/\W+/g, '-').toLowerCase()}.mp4`;
+      document.body.appendChild(a);
       a.click();
-      e.target.innerText = lang === 'en' ? 'Download' : 'Baixar';
+      document.body.removeChild(a);
+      // Libera memória após 60s (tempo suficiente para o download iniciar)
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+
       window.showToast('Download concluído ✓', { type: 'success' });
-    } catch(err) { window.showToast('Erro ao baixar vídeo', { type: 'error' }); }
+    } catch (err) {
+      console.error('Download falhou:', err);
+      window.showToast(
+        lang === 'en' ? 'Download failed' : 'Falha no download',
+        { type: 'error' }
+      );
+    } finally {
+      setDlLoadingId(null);
+    }
   }
 
   return (
     <div className="page fade-up">
       <div className="topbar">
         <IconBtn name="arrowL" size={20} onClick={() => go('dashboard')} />
-        <h2 className="h2">{project?.title || 'Projeto'}</h2>
+        <h2 className="h2">
+    {project?.title || (lang === 'en' ? 'All clips' : 'Todos os cortes')}
+  </h2>
       </div>
 
       <div className="filter-bar" style={{ marginBottom: 16 }}>
@@ -546,7 +598,18 @@ function ClipsScreen({ lang, go, project, openClip }) {
                 <Btn size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openClip ? openClip(c) : go('editor', { project, clip: c }); }}>{T.edit}</Btn>
                 <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
                   <Btn size="sm" variant="ghost" icon="send" onClick={e => { e.stopPropagation(); go('schedule'); }}>{lang === 'en' ? 'Post' : 'Postar'}</Btn>
-                  <Btn size="sm" variant="primary" icon="download" onClick={(e) => dl(c, e)}>{T.dl}</Btn>
+                  <Btn
+    size="sm"
+    variant="primary"
+    icon={dlLoadingId === c.id ? 'refresh' : 'download'}
+    disabled={dlLoadingId === c.id}
+    onClick={(e) => dl(c, e)}
+    style={{ minWidth: 80 }}
+  >
+    {dlLoadingId === c.id
+      ? (lang === 'en' ? 'Saving…' : 'Salvando…')
+      : T.dl}
+  </Btn>
                 </div>
               </div>
             </div>

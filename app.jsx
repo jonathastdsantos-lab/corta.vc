@@ -328,7 +328,7 @@ function App() {
               {route === 'dashboard' && <Dashboard lang={lang} go={go} openAI={() => setAiOpen(true)} user={user} />}
               {route === 'import' && <ImportScreen lang={lang} go={go} user={user} />}
               {route === 'processing' && <ProcessingScreen lang={lang} go={go} />}
-              {route === 'clips' && <ClipsScreen lang={lang} go={go} project={project} openClip={openClip} />}
+              {route === 'clips' && <ClipsScreen lang={lang} go={go} project={project} openClip={openClip} user={user} />}
               {route === 'templates' && <TemplatesScreen lang={lang} openClip={openClip} />}
               {route === 'schedule' && <ScheduleScreen lang={lang} openAI={() => setAiOpen(true)} />}
               {route === 'analytics' && <AnalyticsScreen lang={lang} user={user} />}
