@@ -988,7 +988,7 @@ async function renderWithBroll(
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  // ── Health check: verifica se Python + OpenCV estão disponíveis ──
+  // ── Health check ──────────────────────────────────────────────
   if (req.method === 'GET') {
     const check = new URL(req.url).searchParams.get('check');
     if (check === 'face') {
@@ -1008,6 +1008,22 @@ serve(async (req) => {
         );
       }
     }
+    if (check === 'worker') {
+      // Verifica se o Worker Contabo está online
+      const workerUrl = Deno.env.get('WORKER_URL');
+      const workerSecret = Deno.env.get('WORKER_SECRET');
+      if (!workerUrl) return new Response(JSON.stringify({ worker: false, reason: 'WORKER_URL não configurado' }), { headers: corsHeaders });
+      try {
+        const res = await fetch(`${workerUrl}/health`, {
+          headers: { 'x-worker-secret': workerSecret ?? '' },
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = await res.json();
+        return new Response(JSON.stringify({ worker: true, ...data }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (e) {
+        return new Response(JSON.stringify({ worker: false, error: String(e) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
   }
 
   const supabase = createClient(
@@ -1023,6 +1039,50 @@ serve(async (req) => {
     if (!project_id || !user_id) throw new Error('Missing project_id or user_id');
     projectId = project_id;
 
+    // ── MODO WORKER (Contabo) ──────────────────────────────────
+    // Se WORKER_URL estiver configurado, despacha o job para o VPS.
+    // O Worker processa de forma assíncrona e salva os clips diretamente
+    // no Supabase Storage. Sem timeout, sem limitação de CPU.
+    const workerUrl    = Deno.env.get('WORKER_URL');
+    const workerSecret = Deno.env.get('WORKER_SECRET');
+
+    if (workerUrl && workerSecret) {
+      // Marca projeto como processing imediatamente
+      await supabase.from('projects')
+        .update({ status: 'processing' })
+        .eq('id', project_id);
+
+      // Despacha para o Worker — não espera o processamento terminar
+      const workerRes = await fetch(`${workerUrl}/process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-worker-secret': workerSecret,
+        },
+        body: JSON.stringify({ project_id, user_id }),
+        signal: AbortSignal.timeout(10_000), // só aguarda o ACK (10s)
+      });
+
+      if (!workerRes.ok) {
+        const errText = await workerRes.text();
+        throw new Error(`Worker recusou o job: ${workerRes.status} — ${errText}`);
+      }
+
+      const ack = await workerRes.json();
+      console.log('Worker ACK:', ack);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          mode: 'worker',
+          message: 'Job enviado para o Worker Contabo',
+          worker_url: workerUrl,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ── MODO LOCAL (fallback se WORKER_URL não configurado) ────
     await supabase.from('projects').update({ status: 'processing' }).eq('id', project_id);
 
     // ── 1. Buscar projeto ──────────────────────────────────────────
