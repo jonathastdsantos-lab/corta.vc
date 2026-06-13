@@ -354,7 +354,6 @@ function ScheduleScreen({ lang, openAI, user }) {
             <Btn variant="ghost" size="sm" icon="check" style={{ marginTop: 11 }} onClick={openAI}>{lang === 'en' ? 'Apply suggestion' : 'Aplicar sugestão'}</Btn>
           </div>
         </div>
-        </div>
       </div>
 
       {/* Modal de novo agendamento */}
