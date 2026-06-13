@@ -442,42 +442,325 @@ function platColor(p) {
 }
 
 function AnalyticsScreen({ lang, user }) {
-  const [stats, setStats] = useState(null);
+  const en = lang === 'en';
 
+  // ── Estado ────────────────────────────────────────────────────
+  const [stats,    setStats]    = useState(null);   // métricas do topo
+  const [topClips, setTopClips] = useState(null);   // top 5 por score
+  const [weekly,   setWeekly]   = useState(null);   // clips por semana (8 semanas)
+  const [loading,  setLoading]  = useState(true);
+
+  // ── Carregamento ──────────────────────────────────────────────
   useEffect(() => {
     async function load() {
-      if (!window.Supa?.client) return;
-      const { count: clipsCount } = await window.Supa.client.from('clips').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
-      const { count: projectsCount } = await window.Supa.client.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
-      const { count: scheduleCount } = await window.Supa.client.from('schedule').select('*', { count: 'exact', head: true }).eq('user_id', user?.id || '');
-      setStats({ clips: clipsCount || 0, projects: projectsCount || 0, schedules: scheduleCount || 0 });
+      setLoading(true);
+
+      // ── Modo demo: dados mock ──
+      if (!window.Supa?.client || !user?.id) {
+        await new Promise(r => setTimeout(r, 600)); // simula latência
+        setStats({
+          projects:    12,
+          clips:      184,
+          schedules:   96,
+          totalViews: 2_400_000,
+          totalLikes:   47_000,
+          hoursaved:      47,
+        });
+        setTopClips([
+          { id: '1', title: 'O segredo que ninguém te conta 🔥', score: 94, views_count: 48200, likes_count: 3100, niche: 'financas',  thumbnail_url: null },
+          { id: '2', title: 'Por que você nunca fica rico 💸',   score: 91, views_count: 31500, likes_count: 2400, niche: 'financas',  thumbnail_url: null },
+          { id: '3', title: 'A verdade sobre investimentos',     score: 88, views_count: 22800, likes_count: 1870, niche: 'educacao',  thumbnail_url: null },
+          { id: '4', title: 'Esse hack mudou minha vida toda',   score: 85, views_count: 18400, likes_count: 1220, niche: 'podcast',   thumbnail_url: null },
+          { id: '5', title: 'Você está fazendo isso errado ⚠️',  score: 82, views_count: 14100, likes_count:  980, niche: 'fitness',   thumbnail_url: null },
+        ]);
+        // Gera dados semanais de demo para as últimas 8 semanas
+        setWeekly(Array.from({ length: 8 }, (_, i) => ({
+          label: `S${8 - i}`,
+          count: Math.floor(Math.random() * 18) + 4,
+        })).reverse());
+        setLoading(false);
+        return;
+      }
+
+      // ── Modo live: queries reais ──
+      const uid = user.id;
+
+      // Busca tudo em paralelo para não bloquear sequencialmente
+      const [
+        { count: projectsCount },
+        { count: clipsCount },
+        { count: scheduleCount },
+        { data: clipsData },
+      ] = await Promise.all([
+        window.Supa.client
+          .from('projects').select('*', { count: 'exact', head: true })
+          .eq('user_id', uid),
+        window.Supa.client
+          .from('clips').select('*', { count: 'exact', head: true })
+          .eq('user_id', uid),
+        window.Supa.client
+          .from('schedule').select('*', { count: 'exact', head: true })
+          .eq('user_id', uid),
+        window.Supa.client
+          .from('clips')
+          .select('id, title, score, views_count, likes_count, niche, thumbnail_url, created_at')
+          .eq('user_id', uid)
+          .order('created_at', { ascending: false })
+          .limit(200),  // busca recentes suficientes para calcular tudo
+      ]);
+
+      const clips = clipsData || [];
+
+      // ── Métricas agregadas ──
+      const totalViews = clips.reduce((s, c) => s + (c.views_count || 0), 0);
+      const totalLikes = clips.reduce((s, c) => s + (c.likes_count || 0), 0);
+      const hoursaved  = Math.round((clipsCount || 0) * 0.8);
+
+      setStats({
+        projects:  projectsCount || 0,
+        clips:     clipsCount    || 0,
+        schedules: scheduleCount || 0,
+        totalViews,
+        totalLikes,
+        hoursaved,
+      });
+
+      // ── Top 5 clips por score ──
+      const sorted = [...clips].sort((a, b) => (b.score || 0) - (a.score || 0));
+      setTopClips(sorted.slice(0, 5));
+
+      // ── Clips por semana (últimas 8 semanas) ──
+      const now    = Date.now();
+      const msWeek = 7 * 24 * 60 * 60 * 1000;
+      const weeks  = Array.from({ length: 8 }, (_, i) => {
+        const weekStart = now - (7 - i) * msWeek;
+        const weekEnd   = weekStart + msWeek;
+        return {
+          label: new Date(weekStart).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+          count: clips.filter(c => {
+            const t = new Date(c.created_at).getTime();
+            return t >= weekStart && t < weekEnd;
+          }).length,
+        };
+      });
+      setWeekly(weeks);
+
+      setLoading(false);
     }
+
     load();
   }, [user]);
 
+  // ── Helpers ───────────────────────────────────────────────────
+  function fmt(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace('.0', '') + 'M';
+    if (n >= 1_000)     return (n / 1_000).toFixed(1).replace('.0', '') + 'k';
+    return String(n);
+  }
+
+  const maxWeekly = weekly ? Math.max(...weekly.map(w => w.count), 1) : 1;
+
+  // ── Render ────────────────────────────────────────────────────
   return (
     <div className="page page-wide fade-up">
-      <div className="section-head fade-up">
+
+      {/* Cabeçalho */}
+      <div className="section-head fade-up" style={{ marginBottom: 28 }}>
         <div>
           <div className="h-eyebrow">Insights</div>
-          <h1 className="h1">{lang === 'en' ? 'Analytics' : 'Métricas'}</h1>
-          <p className="sub">{lang === 'en' ? 'Track your content performance' : 'Acompanhe o desempenho do seu conteúdo'}</p>
+          <h1 className="h1">{en ? 'Analytics' : 'Métricas'}</h1>
+          <p className="sub">
+            {en ? 'Track your content performance' : 'Acompanhe o desempenho do seu conteúdo'}
+          </p>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginTop: 24 }}>
-        <div className="card" style={{ padding: 24 }}>
-          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Total Projects' : 'Total de Projetos'}</div>
-          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.projects : '...'}</div>
-        </div>
-        <div className="card" style={{ padding: 24 }}>
-          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Clips Generated' : 'Cortes Gerados'}</div>
-          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.clips : '...'}</div>
-        </div>
-        <div className="card" style={{ padding: 24 }}>
-          <div className="tmeta" style={{ marginBottom: 8 }}>{lang === 'en' ? 'Posts Scheduled' : 'Agendamentos'}</div>
-          <div className="h1" style={{ fontSize: 48 }}>{stats ? stats.schedules : '...'}</div>
-        </div>
+
+      {/* ── Stat row: 6 métricas ── */}
+      <div className="stat-row stagger" style={{ marginBottom: 32 }}>
+        {loading ? (
+          // Skeleton: 6 cards shimmer
+          Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="stat skeleton-card">
+              <div className="skeleton skeleton-text" style={{ height: 12, width: '60%', marginBottom: 12 }} />
+              <div className="skeleton skeleton-text" style={{ height: 30, width: '45%' }} />
+            </div>
+          ))
+        ) : stats ? [
+          { key: 'views',    icon: 'eye',      label: { pt: 'Visualizações',     en: 'Total views'    }, num: fmt(stats.totalViews), delta: '', dir: 'up' },
+          { key: 'likes',    icon: 'heart',    label: { pt: 'Curtidas totais',   en: 'Total likes'    }, num: fmt(stats.totalLikes), delta: '', dir: 'up' },
+          { key: 'clips',    icon: 'scissors', label: { pt: 'Cortes gerados',    en: 'Clips generated'}, num: String(stats.clips),   delta: '', dir: 'up' },
+          { key: 'projects', icon: 'folder',   label: { pt: 'Projetos',          en: 'Projects'       }, num: String(stats.projects),delta: '', dir: 'up' },
+          { key: 'posted',   icon: 'send',     label: { pt: 'Publicados',        en: 'Published'      }, num: String(stats.schedules), delta: '', dir: 'up' },
+          { key: 'time',     icon: 'clock',    label: { pt: 'Horas economizadas',en: 'Hours saved'    }, num: `${stats.hoursaved}h`,  delta: '', dir: 'up' },
+        ].map(s => (
+          <div key={s.key} className="stat">
+            <div className="label">
+              <Icon name={s.icon} size={15} />
+              {s.label[lang] || s.label.pt}
+            </div>
+            <div className="num">{s.num}</div>
+          </div>
+        )) : null}
       </div>
+
+      {/* ── Grid: gráfico semanal + top clips ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+
+        {/* Gráfico semanal */}
+        <div className="card" style={{ padding: '20px 20px 16px' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
+            {en ? 'Clips per week' : 'Cortes por semana'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16 }}>
+            {en ? 'Last 8 weeks' : 'Últimas 8 semanas'}
+          </div>
+
+          {loading ? (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 100 }}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="skeleton" style={{
+                  flex: 1, height: `${30 + Math.random() * 60}%`,
+                  borderRadius: '4px 4px 0 0'
+                }} />
+              ))}
+            </div>
+          ) : weekly ? (
+            <div>
+              {/* Barras */}
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 5, height: 100, marginBottom: 6 }}>
+                {weekly.map((w, i) => {
+                  const pct = maxWeekly > 0 ? (w.count / maxWeekly) * 100 : 0;
+                  return (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, height: '100%', justifyContent: 'flex-end' }}>
+                      {w.count > 0 && (
+                        <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600 }}>{w.count}</span>
+                      )}
+                      <div
+                        title={`${w.label}: ${w.count} ${en ? 'clips' : 'cortes'}`}
+                        style={{
+                          width: '100%',
+                          height: `${Math.max(pct, w.count > 0 ? 8 : 2)}%`,
+                          background: w.count > 0 ? 'var(--accent)' : 'var(--surface-3)',
+                          borderRadius: '3px 3px 0 0',
+                          opacity: w.count > 0 ? 1 : 0.4,
+                          transition: 'height .4s cubic-bezier(.2,.7,.2,1)',
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Labels de data */}
+              <div style={{ display: 'flex', gap: 5 }}>
+                {weekly.map((w, i) => (
+                  <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 9, color: 'var(--faint)', lineHeight: 1 }}>
+                    {w.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Top 5 clips por score */}
+        <div className="card" style={{ padding: '20px 20px 8px' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
+            {en ? 'Top clips by score' : 'Top cortes por score'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16 }}>
+            {en ? 'Highest virality score' : 'Maior score de viralização'}
+          </div>
+
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                <div className="skeleton" style={{ width: 32, height: 32, borderRadius: 6, flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div className="skeleton skeleton-text" style={{ height: 12, width: '75%', marginBottom: 6 }} />
+                  <div className="skeleton skeleton-text" style={{ height: 10, width: '40%' }} />
+                </div>
+                <div className="skeleton" style={{ width: 36, height: 24, borderRadius: 99 }} />
+              </div>
+            ))
+          ) : topClips?.length > 0 ? (
+            topClips.map((clip, i) => (
+              <div key={clip.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 0',
+                borderBottom: i < topClips.length - 1 ? '1px solid var(--border)' : 'none',
+              }}>
+                {/* Rank */}
+                <div style={{
+                  width: 20, textAlign: 'center', fontSize: 12,
+                  fontWeight: 700, color: i === 0 ? 'var(--accent)' : 'var(--faint)',
+                  flexShrink: 0,
+                }}>
+                  {i + 1}
+                </div>
+
+                {/* Thumbnail ou placeholder */}
+                <div style={{
+                  width: 36, height: 36, borderRadius: 6, overflow: 'hidden',
+                  background: 'var(--surface-3)', flexShrink: 0, display: 'grid', placeItems: 'center',
+                }}>
+                  {clip.thumbnail_url ? (
+                    <img src={clip.thumbnail_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <Icon name="film" size={14} style={{ opacity: .4 }} />
+                  )}
+                </div>
+
+                {/* Título + métricas */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {clip.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, display: 'flex', gap: 8 }}>
+                    {clip.views_count > 0 && (
+                      <span><Icon name="eye"   size={10} /> {fmt(clip.views_count)}</span>
+                    )}
+                    {clip.likes_count > 0 && (
+                      <span><Icon name="heart" size={10} /> {fmt(clip.likes_count)}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Score badge */}
+                <div style={{
+                  flexShrink: 0, padding: '3px 8px', borderRadius: 99, fontSize: 12, fontWeight: 700,
+                  background: clip.score >= 80 ? 'var(--good-bg)' : clip.score >= 60 ? 'var(--accent-soft)' : 'var(--surface-3)',
+                  color:      clip.score >= 80 ? 'var(--good)'    : clip.score >= 60 ? 'var(--accent)'      : 'var(--muted)',
+                }}>
+                  {clip.score ?? '—'}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+              {en ? 'No clips yet' : 'Nenhum corte ainda'}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* ── Nota sobre sincronização ── */}
+      {!loading && stats?.totalViews === 0 && stats?.clips > 0 && (
+        <div style={{
+          marginTop: 16, padding: '10px 14px', background: 'var(--surface-2)',
+          borderRadius: 'var(--r)', border: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--muted)',
+        }}>
+          <Icon name="info" size={14} style={{ flexShrink: 0 }} />
+          {en
+            ? 'Views and likes sync automatically after posting. Connect your social networks to see real data.'
+            : 'Views e curtidas sincronizam automaticamente após publicar. Conecte suas redes sociais para ver dados reais.'}
+        </div>
+      )}
+
     </div>
   );
 }
