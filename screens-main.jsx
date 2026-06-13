@@ -51,7 +51,7 @@ function Dashboard({ lang, go, openAI, user }) {
   return (
     <div className="page">
       <div className="fade-up" style={{ marginBottom: 26 }}>
-        <h1 className="h1">{typeof T.greeting === 'function' ? T.greeting(user?.name?.split(' ')[0] || '') : T.greeting} <span style={{ color: 'var(--accent)' }}>✦</span></h1>
+        <h1 className="h1" style={{ wordBreak: 'break-word' }}>{typeof T.greeting === 'function' ? T.greeting(user?.name?.split(' ')[0] || '') : T.greeting} <span style={{ color: 'var(--accent)' }}>✦</span></h1>
         <p className="sub">{T.greeting_sub}</p>
       </div>
 

@@ -25,20 +25,13 @@ function NotifDropdown({ notifications, open, onClose, onRead, lang }) {
 
   const typeIcon = { processing_done: 'scissors', post_published: 'send', credits_low: 'zap', new_feature: 'sparkles', welcome: 'star' };
 
+  if (!open) return null;
+
   return (
-    <div style={{ position: 'relative' }}>
-      <button className="btn-icon bordered" onClick={onClose} style={{ position: 'relative' }}>
-        <Icon name="bell" size={18} />
-        {unread > 0 && (
-          <span style={{ position: 'absolute', top: 4, right: 4, width: 8, height: 8,
-            borderRadius: 99, background: 'var(--accent)', border: '2px solid var(--surface)' }} />
-        )}
-      </button>
-      {open && (
-        <div className="card fade-up" style={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 320,
-          zIndex: 100, boxShadow: 'var(--shadow-pop)', overflow: 'hidden'
-        }}>
+    <div className="card fade-up" style={{
+      position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 320,
+      zIndex: 100, boxShadow: 'var(--shadow-pop)', overflow: 'hidden'
+    }}>
           <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)',
             display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 700, fontSize: 14 }}>
@@ -259,9 +252,9 @@ function App() {
                 <div className="plan-card">
                   <div className="row between" style={{ marginBottom: 2 }}>
                     <span style={{ fontWeight: 700, fontSize: 13 }}>{T.plan}</span>
-                    <span className={`tag ${user.plan && user.plan !== 'free' && user.plan !== 'starter' ? 'accent' : ''}`} style={{ height: 20, fontSize: 11, textTransform: 'capitalize' }}>
-                      {user.plan && user.plan !== 'free' && user.plan !== 'starter' && <Icon name="zap" size={11} fill="current" />}
-                      {user.plan || 'free'}
+                    <span className={`tag ${user.plan !== 'free' ? 'accent' : ''}`} style={{ height: 20, fontSize: 11, textTransform: 'capitalize' }}>
+                      {user.plan !== 'free' && <Icon name="zap" size={11} fill="current" />}
+                      {user.plan}
                     </span>
                   </div>
                   <div className="meter"><i style={{ width: (() => {
@@ -275,8 +268,8 @@ function App() {
               <div className="user-row">
                 <Avatar name={user.initials} size={32} />
                 {!collapsed && <div className="grow" style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.name}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.email}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }} title={user.name}>{user.name}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }} title={user.email}>{user.email}</div>
                 </div>}
                 {!collapsed && <IconBtn name="lock" size={16} onClick={logout} title={lang === 'en' ? 'Log out' : 'Sair'} />}
               </div>
@@ -294,7 +287,7 @@ function App() {
             <div className="topbar">
               <IconBtn name="drag" size={18} onClick={() => setCollapsed(!collapsed)} />
               <div className="crumb" style={{ display: 'flex', alignItems: 'center' }}>
-                <img src="/logo.png" alt="Corta.vc" style={{ height: 28, marginRight: 8 }} /><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
+                <img src="/logo.png" alt="Corta.vc" style={{ height: 40, marginRight: 8 }} /><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
                 {project && route === 'clips' && <React.Fragment><Icon name="chevR" size={15} /><span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{project.title}</span></React.Fragment>}
               </div>
               <div className="topbar-spacer" />
@@ -324,7 +317,7 @@ function App() {
               {route === 'processing' && <ProcessingScreen lang={lang} go={go} />}
               {route === 'clips' && <ClipsScreen lang={lang} go={go} project={project} openClip={openClip} />}
               {route === 'templates' && <TemplatesScreen lang={lang} openClip={openClip} />}
-              {route === 'schedule' && <ScheduleScreen lang={lang} openAI={() => setAiOpen(true)} user={user} />}
+              {route === 'schedule' && <ScheduleScreen lang={lang} openAI={() => setAiOpen(true)} />}
               {route === 'analytics' && <AnalyticsScreen lang={lang} user={user} />}
             </div>
           </div>
@@ -397,6 +390,106 @@ function App() {
   );
 }
 
-// AnalyticsScreen defined in screens-extra.jsx — used directly from there
+// Lightweight analytics screen
+function AnalyticsScreen({ lang, user }) {
+  const T = STR[lang];
+  const [stats, setStats] = useState(null);
+  const [topClips, setTopClips] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      if (!Supa.client || !user) {
+        setStats(STATS);
+        setTopClips([...CLIPS].sort((a,b) => b.score - a.score).slice(0,5));
+        setLoading(false);
+        return;
+      }
+      const [clipsRes, publishedRes, projectsRes] = await Promise.all([
+        Supa.client.from('clips').select('id, score, title, niche, views_count')
+          .eq('user_id', user.id).order('score', { ascending: false }),
+        Supa.client.from('schedule').select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id).eq('status', 'published'),
+        Supa.client.from('projects').select('duration')
+          .eq('user_id', user.id)
+      ]);
+
+      const clips = clipsRes.data || [];
+      const publishedCount = publishedRes.count || 0;
+      const totalViews = clips.reduce((s, c) => s + (c.views_count || 0), 0);
+      const totalDuration = (projectsRes.data || []).reduce((s,p) => s + (p.duration || 0), 0);
+      const hoursSaved = Math.round((totalDuration / 3600) * 0.7);
+
+      setStats([
+        { key: 'views',  label: { pt: 'Visualizações', en: 'Views' },
+          num: totalViews > 999 ? (totalViews/1000).toFixed(1)+'k' : String(totalViews),
+          delta: '', dir: 'up', icon: 'eye' },
+        { key: 'clips',  label: { pt: 'Cortes criados', en: 'Clips made' },
+          num: String(clips.length), delta: '', dir: 'up', icon: 'scissors' },
+        { key: 'posted', label: { pt: 'Publicados', en: 'Published' },
+          num: String(publishedCount), delta: '', dir: 'up', icon: 'send' },
+        { key: 'time',   label: { pt: 'Horas economizadas', en: 'Hours saved' },
+          num: hoursSaved+'h', delta: '', dir: 'up', icon: 'clock' },
+      ]);
+      setTopClips(clips.slice(0,5));
+      setLoading(false);
+    }
+    load();
+  }, [user]);
+
+  const bars = [42, 58, 35, 71, 64, 88, 96, 74, 82, 60, 91, 78];
+  return (
+    <div className="page page-wide">
+      <div className="section-head fade-up">
+        <div>
+          <div className="h-eyebrow">{lang === 'en' ? 'Last 30 days' : 'Últimos 30 dias'}</div>
+          <h1 className="h1">{T.nav_analytics}</h1>
+          <p className="sub">{lang === 'en' ? 'How your clips are performing across networks.' : 'Como seus cortes estão performando nas redes.'}</p>
+        </div>
+      </div>
+      <div className="stat-row stagger" style={{ marginBottom: 24 }}>
+        {loading ? (
+          [1,2,3,4].map(i => (
+            <div key={i} className="stat" style={{ background: 'var(--surface-3)', height: 80, borderRadius: 'var(--r-lg)', animation: 'pulse 1.5s infinite' }} />
+          ))
+        ) : (
+          stats.map(s => (
+            <div key={s.key} className="stat">
+              <div className="label"><Icon name={s.icon} size={15} />{s.label[lang] || s.label}</div>
+              <div className="num">{s.num}</div>
+              <div className={`delta ${s.dir}`}>↑ {s.delta}</div>
+            </div>
+          ))
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 22, alignItems: 'start' }}>
+        <div className="card" style={{ padding: 20 }}>
+          <h3 className="h3" style={{ marginBottom: 18 }}>{lang === 'en' ? 'Views by week' : 'Visualizações por semana'}</h3>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 180 }}>
+            {bars.map((b, i) => (
+              <div key={i} style={{ flex: 1, height: `${b}%`, background: i === 6 ? 'var(--accent)' : 'var(--surface-3)', borderRadius: '6px 6px 0 0', transition: 'height .4s' }} title={`${b}%`} />
+            ))}
+          </div>
+        </div>
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <h3 className="h3" style={{ padding: '16px 16px 12px' }}>{lang === 'en' ? 'Top clips' : 'Melhores cortes'}</h3>
+          {loading ? (
+            <div style={{ padding: 20 }}>Carregando...</div>
+          ) : topClips.map((c, i) => (
+            <div key={c.id} className="queue-item">
+              <span className="mono" style={{ fontSize: 13, color: 'var(--muted)', width: 16 }}>{i + 1}</span>
+              <Thumb niche={c.niche} className="qthumb" label={false} />
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title}</div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{c.views_count ? c.views_count : (c.score * 1.2).toFixed(0)+'k'} {lang === 'en' ? 'views' : 'views'}</div>
+              </div>
+              <Score value={c.score} size={34} showCap={false} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
