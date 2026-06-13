@@ -163,6 +163,10 @@ function ScheduleScreen({ lang, openAI, user }) {
   const [modalDateTime, setModalDateTime] = useState('');
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [userClips, setUserClips] = useState([]);
+  const [calMonth, setCalMonth] = useState(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
 
   useEffect(() => {
     async function load() {
@@ -201,21 +205,44 @@ function ScheduleScreen({ lang, openAI, user }) {
     load();
   }, [user]);
 
-  const dows = lang === 'en' ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-  const now = new Date();
-  const monthName = now.toLocaleDateString(lang === 'en' ? 'en-US' : 'pt-BR', { month: 'long', year: 'numeric' });
-  const firstDow = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
-  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const today = now.getDate();
+  const dows = lang === 'en'
+    ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    : ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+  const { year: calYear, month: calMonthIdx } = calMonth;
+  const monthName  = new Date(calYear, calMonthIdx, 1)
+    .toLocaleDateString(lang === 'en' ? 'en-US' : 'pt-BR', { month: 'long', year: 'numeric' });
+  const firstDow   = new Date(calYear, calMonthIdx, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonthIdx + 1, 0).getDate();
+  const nowReal     = new Date();
+  const isCurrentMonth = calYear === nowReal.getFullYear() && calMonthIdx === nowReal.getMonth();
+  const today       = isCurrentMonth ? nowReal.getDate() : -1;
+
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= days; d++) cells.push(d);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7) cells.push(null);
+
+  // Filtra eventos do mês exibido no calendário
   const evByDay = {};
   events.forEach(e => {
-    const day = new Date(e.scheduled_at).getDate();
-    (evByDay[day] = evByDay[day] || []).push(e);
+    const d = new Date(e.scheduled_at);
+    if (d.getFullYear() === calYear && d.getMonth() === calMonthIdx) {
+      const day = d.getDate();
+      (evByDay[day] = evByDay[day] || []).push(e);
+    }
   });
+
+  function prevMonth() {
+    setCalMonth(({ year, month }) =>
+      month === 0 ? { year: year - 1, month: 11 } : { year, month: month - 1 }
+    );
+  }
+  function nextMonth() {
+    setCalMonth(({ year, month }) =>
+      month === 11 ? { year: year + 1, month: 0 } : { year, month: month + 1 }
+    );
+  }
 
   return (
     <div className="page page-wide">
@@ -241,7 +268,23 @@ function ScheduleScreen({ lang, openAI, user }) {
         <div className="card" style={{ padding: 18 }}>
           <div className="row between" style={{ marginBottom: 14 }}>
             <h2 className="h2">{monthName}</h2>
-            <div className="row" style={{ gap: 4 }}><IconBtn name="chevL" size={18} /><IconBtn name="chevR" size={18} /></div>
+            <div className="row" style={{ gap: 4 }}>
+    <IconBtn name="chevL" size={18} onClick={prevMonth} title={lang === 'en' ? 'Previous month' : 'Mês anterior'} />
+    {!isCurrentMonth && (
+      <button
+        onClick={() => setCalMonth({ year: nowReal.getFullYear(), month: nowReal.getMonth() })}
+        style={{
+          fontSize: 11, padding: '3px 8px', borderRadius: 99,
+          border: '.5px solid var(--border)', background: 'transparent',
+          color: 'var(--muted)', cursor: 'pointer'
+        }}
+        title={lang === 'en' ? 'Go to today' : 'Ir para hoje'}
+      >
+        {lang === 'en' ? 'Today' : 'Hoje'}
+      </button>
+    )}
+    <IconBtn name="chevR" size={18} onClick={nextMonth} title={lang === 'en' ? 'Next month' : 'Próximo mês'} />
+  </div>
           </div>
           <div className="cal-grid" style={{ marginBottom: 8 }}>
             {dows.map(d => <div key={d} className="cal-head">{d}</div>)}
@@ -253,7 +296,10 @@ function ScheduleScreen({ lang, openAI, user }) {
                 {(evByDay[d] || []).map((e, j) => {
                   return (
                     <div key={j} className="cal-event" style={{ background: platColor(e.platform) }} title={e.clips?.title}>
-                      <Icon plat={e.platform} size={11} />{new Date(e.scheduled_at).getHours() + ':00'}
+                      <Icon plat={e.platform} size={11} />{(() => {
+    const d = new Date(e.scheduled_at);
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  })()}
                     </div>
                   );
                 })}
@@ -278,7 +324,17 @@ function ScheduleScreen({ lang, openAI, user }) {
                     <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip?.title}</div>
                     <div className="row" style={{ gap: 6, marginTop: 4 }}>
                       <span className={`plat ${e.platform}`} style={{ width: 20, height: 20, borderRadius: 5 }}><Icon plat={e.platform} size={11} /></span>
-                      <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{lang === 'en' ? 'Jun' : ''} {new Date(e.scheduled_at).getDate()}{lang === 'en' ? '' : '/06'} · {new Date(e.scheduled_at).getHours() + ':00'}</span>
+                      <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
+    {new Date(e.scheduled_at).toLocaleDateString(
+      lang === 'en' ? 'en-US' : 'pt-BR',
+      { day: 'numeric', month: 'short' }
+    )}
+    {' · '}
+    {(() => {
+      const d = new Date(e.scheduled_at);
+      return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    })()}
+  </span>
                     </div>
                   </div>
                   <IconBtn name="more" size={16} />
