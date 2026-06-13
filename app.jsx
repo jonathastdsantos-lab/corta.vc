@@ -98,6 +98,7 @@ function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [clipsCount, setClipsCount] = useState(0);
   const [aiMsgs, setAiMsgs] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     function handleOutsideClick(e) {
@@ -274,6 +275,17 @@ function App() {
                 </div>}
                 {!collapsed && <IconBtn name="lock" size={16} onClick={logout} title={lang === 'en' ? 'Log out' : 'Sair'} />}
               </div>
+              
+              {/* Botão de ajuda */}
+              <button
+                className="nav-item"
+                onClick={() => setShowHelp(true)}
+                title={lang === 'en' ? 'Help & Guide' : 'Ajuda e Guia'}
+                style={{ color: 'var(--muted)', marginTop: 8 }}
+              >
+                <Icon name="info" size={18} />
+                <span className="hide-collapsed">{lang === 'en' ? 'Help' : 'Ajuda'}</span>
+              </button>
             </div>
           </aside>
 
@@ -387,6 +399,13 @@ function App() {
         />
       )}
       <ToastContainer />
+      {/* Help Center Modal */}
+      {showHelp && window.HelpCenter && (
+        <window.HelpCenter
+          lang={lang}
+          onClose={() => setShowHelp(false)}
+        />
+      )}
     </React.Fragment>
   );
 }
