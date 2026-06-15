@@ -296,7 +296,13 @@ function App() {
               </div>
             )}
             <div className="topbar">
-              <IconBtn name="drag" size={18} onClick={() => setCollapsed(!collapsed)} />
+              {/* Botão collapse: só no desktop (no mobile não faz sentido) */}
+              <IconBtn
+                name="drag"
+                size={18}
+                onClick={() => setCollapsed(!collapsed)}
+                className="hide-mobile"
+              />
               <div className="crumb" style={{ display: 'flex', alignItems: 'center' }}>
                 <img src="/logo.png" alt="Corta.vc" style={{ height: 40, marginRight: 8 }} /><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
                 {project && route === 'clips' && <React.Fragment><Icon name="chevR" size={15} /><span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{project.title}</span></React.Fragment>}
@@ -319,7 +325,15 @@ function App() {
                 <NotifDropdown notifications={notifications} open={showNotif} onClose={() => setShowNotif(false)} onRead={markNotifRead} lang={lang} />
               </div>
 
-              <Btn variant="ghost" icon="sparkles" onClick={() => setAiOpen(true)}>{T.ask_ai}</Btn>
+              {/* Botão IA: escondido no mobile (disponível no FAB ou menu) */}
+            <Btn
+              variant="ghost"
+              icon="sparkles"
+              onClick={() => setAiOpen(true)}
+              className="hide-mobile"
+            >
+              {T.ask_ai}
+            </Btn>
             </div>
 
             <div className="scroll" key={routeKey}>

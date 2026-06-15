@@ -272,7 +272,13 @@ function ImportScreen({ lang, go, user }) {
                 style={{ width: '100%', textAlign: 'center', background: 'var(--surface-3)', border: '1px solid var(--surface-2)', padding: 12, borderRadius: 8, color: 'var(--fg)' }}
                 onClick={e => e.stopPropagation()}
               />
-              <div style={{ fontSize: 14, fontWeight: 700, marginTop: 12 }}>{lang === 'en' ? 'or click to upload' : 'ou clique para enviar arquivo'}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, marginTop: 12 }}>
+                {(() => {
+                  const isTouch = window.matchMedia('(hover: none)').matches;
+                  if (lang === 'en') return isTouch ? 'or tap to choose file' : 'or click to upload';
+                  return isTouch ? 'ou toque para escolher arquivo' : 'ou clique para enviar arquivo';
+                })()}
+              </div>
             </div>
           )}
           <div className="sub" style={{ marginTop: 8 }}>{T.accepts}</div>
