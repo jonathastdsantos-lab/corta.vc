@@ -2,6 +2,90 @@
    ONBOARDING — wizard 3 passos para novos usuários
    ============================================================ */
 
+/* ── Subcomponente: linha de rede social com estado próprio ── */
+function SocialRow({ plat, label, userId, en }) {
+  const [connecting, setConnecting] = React.useState(false);
+  const [connected, setConnected] = React.useState(() => {
+    // Detecta retorno do OAuth redirect (?social=success&platform=X)
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get('social') === 'success' && p.get('platform') === plat;
+    } catch { return false; }
+  });
+
+  async function handleConnect() {
+    if (connecting || connected) return;
+    setConnecting(true);
+    try {
+      const supaUrl = window.CORTA_CONFIG?.SUPABASE_URL || 'https://shzjchiortfrnpsoirrb.supabase.co';
+      const session = Supa.client
+        ? (await Supa.client.auth.getSession()).data.session
+        : null;
+      const res = await fetch(`${supaUrl}/functions/v1/social-oauth`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ platform: plat, user_id: userId || 'demo' }),
+      });
+      const data = await res.json();
+      if (data.auth_url) {
+        // Abre popup OAuth
+        const popup = window.open(data.auth_url, `oauth_${plat}`, 'width=600,height=700,noopener');
+        // Polling: aguarda localStorage sinalizando sucesso
+        const check = setInterval(() => {
+          const done = localStorage.getItem(`oauth_done_${plat}`);
+          if (done || popup?.closed) {
+            clearInterval(check);
+            localStorage.removeItem(`oauth_done_${plat}`);
+            if (done) {
+              setConnected(true);
+              window.showToast?.(`${label} conectado! ✓`, 'success');
+            }
+            setConnecting(false);
+          }
+        }, 800);
+        // Timeout de 5 minutos
+        setTimeout(() => { clearInterval(check); setConnecting(false); }, 300_000);
+      } else {
+        throw new Error(data.error || 'Sem URL de autorização');
+      }
+    } catch (e) {
+      console.error('SocialRow.handleConnect:', e);
+      window.showToast?.(`Erro ao conectar ${label}: ${e.message}`, 'error');
+      setConnecting(false);
+    }
+  }
+
+  return (
+    <div className="field-row" style={{ background: 'var(--surface-2)', borderRadius: 'var(--r)', padding: '10px 14px' }}>
+      <span className={`plat ${plat}`} style={{ width: 28, height: 28 }}>
+        <Icon plat={plat} size={14} />
+      </span>
+      <span style={{ fontSize: 14, fontWeight: 500, flex: 1 }}>{label}</span>
+      {connected ? (
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--good)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Icon name="check" size={14} /> {en ? 'Connected' : 'Conectado'}
+        </span>
+      ) : (
+        <Btn
+          variant={connecting ? 'ghost' : 'ghost'}
+          size="sm"
+          disabled={connecting}
+          onClick={handleConnect}
+          icon={connecting ? 'refresh' : undefined}
+        >
+          {connecting
+            ? (en ? 'Connecting…' : 'Conectando…')
+            : (en ? 'Connect' : 'Conectar')}
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+/* ── Wizard principal ── */
 function OnboardingWizard({ lang, user, onComplete }) {
   const en = lang === 'en';
   const [step, setStep] = useState(0);
@@ -26,6 +110,13 @@ function OnboardingWizard({ lang, user, onComplete }) {
     setBusy(false);
     onComplete();
   }
+
+  const SOCIAL_PLATS = [
+    { id: 'tiktok',    label: 'TikTok' },
+    { id: 'instagram', label: 'Instagram' },
+    { id: 'youtube',   label: 'YouTube Shorts' },
+    { id: 'linkedin',  label: 'LinkedIn' },
+  ];
 
   const steps = [
     {
@@ -85,23 +176,15 @@ function OnboardingWizard({ lang, user, onComplete }) {
       subtitle: en ? 'Schedule and post directly from Corta.vc' : 'Agende e publique direto do Corta.vc',
       content: (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
-          {['tiktok', 'instagram', 'youtube', 'linkedin'].map(plat => (
-            <div key={plat} className="field-row" style={{ background: 'var(--surface-2)', borderRadius: 'var(--r)', padding: '10px 14px' }}>
-              <span className={`plat ${plat}`} style={{ width: 28, height: 28 }}><Icon plat={plat} size={14} /></span>
-              <span style={{ fontSize: 14, fontWeight: 500, flex: 1 }}>
-                {{ tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube Shorts', linkedin: 'LinkedIn' }[plat]}
-              </span>
-              <Btn variant="ghost" size="sm">
-                {en ? 'Connect' : 'Conectar'}
-              </Btn>
-            </div>
+          {SOCIAL_PLATS.map(({ id, label }) => (
+            <SocialRow key={id} plat={id} label={label} userId={user?.id} en={en} />
           ))}
           <p style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 4 }}>
             {en ? 'You can connect later in settings' : 'Você pode conectar depois nas configurações'}
           </p>
         </div>
       )
-    }
+    },
   ];
 
   const current = steps[step];
