@@ -305,7 +305,9 @@ function App() {
                 className="hide-mobile"
               />
               <div className="crumb" style={{ display: 'flex', alignItems: 'center' }}>
-                <img src="/logo.png" alt="Corta.vc" style={{ height: 40, marginRight: 8 }} /><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
+                <img src="/logo.png" alt="Corta.vc"
+                  width="120" height="40"
+                  style={{ height: 40, width: 'auto', marginRight: 8 }} /><Icon name="chevR" size={15} /><b>{crumbMap[route]}</b>
                 {project && route === 'clips' && <React.Fragment><Icon name="chevR" size={15} /><span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{project.title}</span></React.Fragment>}
               </div>
               <div className="topbar-spacer" />

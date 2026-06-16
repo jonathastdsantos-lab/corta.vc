@@ -133,7 +133,7 @@ function AuthScreen({ lang, onAuth }) {
                 <div className="auth-field">
                   <label className="auth-l" style={{display:'flex',justifyContent:'space-between'}}>
                     {en ? 'Password' : 'Senha'}
-                    {mode === 'login' && <button type="button" onClick={() => {setResetMode(true); setErr(''); setResetOk(false);}} style={{background:'none',border:'none',color:'var(--accent)',fontSize:12,cursor:'pointer',padding:0}}>{en ? 'Forgot password?' : 'Esqueci minha senha'}</button>}
+                    {mode === 'login' && <button type="button" onClick={() => {setResetMode(true); setErr(''); setResetOk(false);}} style={{background:'none',border:'none',color:'#c73d24',fontSize:12,cursor:'pointer',padding:0}}>{en ? 'Forgot password?' : 'Esqueci minha senha'}</button>}
                   </label>
                   <input className="auth-input" type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••" />
                   {mode === 'signup' && (
