@@ -48,6 +48,34 @@ function Dashboard({ lang, go, openAI, user }) {
     { ic: 'link', label: 'Drive', plain: true }, { ic: 'gamepad', label: 'Twitch', plain: true },
     { ic: 'mic', label: 'Zoom', plain: true },
   ];
+  async function handleGenerate() {
+    if (!link.trim()) { go('import'); return; }
+    if (Supa.client && user) {
+      const { data: proj, error } = await Supa.client.from('projects').insert({
+        user_id: user.id,
+        title: link.includes('youtube') ? 'Vídeo do YouTube' : 'Vídeo importado',
+        source_type: link.includes('youtube') ? 'youtube'
+          : link.includes('drive') ? 'drive'
+          : link.includes('twitch') ? 'twitch' : 'link',
+        source_url: link.trim(),
+        status: 'processing',
+      }).select().single();
+      if (!error && proj) {
+        try {
+          const { data: { session } } = await Supa.client.auth.getSession();
+          fetch(window.CORTA_CONFIG.SUPABASE_URL + '/functions/v1/process-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+            body: JSON.stringify({ project_id: proj.id, user_id: user.id }),
+          }).catch(e => console.error('process-video:', e));
+        } catch(e) { console.error('Erro ao iniciar processamento', e); }
+        go('processing', { project: proj });
+        return;
+      }
+    }
+    go('processing');
+  }
+
   return (
     <div className="page">
       <div className="fade-up" style={{ marginBottom: 26 }}>
@@ -60,9 +88,9 @@ function Dashboard({ lang, go, openAI, user }) {
         <div className="import-field">
           <Icon name="link" />
           <input value={link} onChange={e => setLink(e.target.value)} placeholder={T.paste_ph}
-            onKeyDown={e => { if (e.key === 'Enter' && link.trim()) go('processing'); }} />
+            onKeyDown={e => { if (e.key === 'Enter' && link.trim()) handleGenerate(); }} />
           <Btn variant="ghost" size="sm" icon="upload" onClick={() => go('import')}>{lang === 'en' ? 'File' : 'Arquivo'}</Btn>
-          <Btn variant="primary" icon="sparkles" onClick={() => go(link.trim() ? 'processing' : 'import')}>{T.generate}</Btn>
+          <Btn variant="primary" icon="sparkles" onClick={handleGenerate}>{T.generate}</Btn>
         </div>
         <div className="source-chips">
           <span style={{ fontSize: 12.5, color: 'var(--muted)', fontWeight: 600, alignSelf: 'center', marginRight: 2 }}>{lang === 'en' ? 'From:' : 'De:'}</span>
