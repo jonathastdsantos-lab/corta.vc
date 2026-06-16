@@ -1205,3 +1205,11 @@ button:focus-visible, a:focus-visible {
   .reel-chrome .reel-progress-bar { animation-play-state: running !important; }
   .reel-chrome .reel-audio-disc   { animation-play-state: running !important; }
 }
+
+/* Evita zoom automático em inputs no iOS sem bloquear zoom do usuário */
+/* (substitui user-scalable=no removido para WCAG 2.1 AA) */
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea {
+    font-size: max(16px, 1em);
+  }
+}

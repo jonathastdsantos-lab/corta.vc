@@ -227,7 +227,8 @@ function App() {
           {/* SIDEBAR */}
           <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
             <div className="brand" style={{ padding: '24px 16px', display: 'flex', justifyContent: 'center' }}>
-              <img src="/logo.png" alt="Corta.vc" style={{ height: 64 }} />
+              <img src="/logo.png" alt="Corta.vc" width="120" height="40"
+                style={{ height: 40, width: 'auto' }} />
             </div>
 
             <Btn variant="primary" icon="plus" onClick={() => go('import')} style={{ marginBottom: 6, justifyContent: collapsed ? 'center' : 'flex-start' }}>
