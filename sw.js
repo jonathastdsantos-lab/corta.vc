@@ -1,6 +1,8 @@
 // Corta.vc Service Worker — cache shell para PWA offline
-const CACHE_NAME = 'corta-vc-v2';
-// v2: remove config.js do cache para garantir anon key sempre fresca
+// v3: só intercepta recursos same-origin; CDNs externos passam direto.
+const CACHE_NAME = 'corta-vc-v3';
+
+// Recursos locais a pré-cachear (sem config.js — anon key deve ser sempre fresca)
 const SHELL_ASSETS = [
   '/',
   '/index.html',
@@ -10,10 +12,6 @@ const SHELL_ASSETS = [
   '/data.jsx',
   '/tweaks-panel.jsx',
   '/plans.js',
-  // config.js excluído intencionalmente — deve sempre ser buscado
-  // da rede para garantir que a anon key mais recente seja usada.
-  // Cachear config.js quebraria o app silenciosamente se a key
-  // for rotacionada enquanto o usuário tem o cache antigo.
 ];
 
 self.addEventListener('install', event => {
@@ -35,24 +33,44 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   // Só intercepta GET
   if (event.request.method !== 'GET') return;
-  // Não intercepta requisições Supabase/API
+
   const url = new URL(event.request.url);
-  if (url.hostname.includes('supabase') || url.hostname.includes('anthropic')) return;
+
+  // ─── CRÍTICO: Nunca interceptar recursos cross-origin ───────────────────────
+  // Se interceptarmos CDNs (unpkg, jsdelivr, fonts.google) e a fetch falhar,
+  // o fallback retorna /index.html com MIME text/html — o browser bloqueia
+  // scripts e CSS com tipo errado, causando tela branca permanente.
+  if (url.origin !== self.location.origin) return;
+
+  // Também não intercepta config.js — anon key precisa sempre estar fresca
+  if (url.pathname === '/config.js') return;
 
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
+
       return fetch(event.request).then(response => {
-        // Não cacheia config.js — chave pode ser rotacionada a qualquer momento
-        const shouldCache = response.ok &&
-          url.pathname !== '/config.js' &&
-          (url.pathname.endsWith('.css') || url.pathname.endsWith('.jsx') || url.pathname.endsWith('.js'));
+        // Cacheia apenas recursos locais estáticos com resposta OK
+        const shouldCache = response.ok && (
+          url.pathname.endsWith('.css') ||
+          url.pathname.endsWith('.jsx') ||
+          url.pathname.endsWith('.js') ||
+          url.pathname.endsWith('.png') ||
+          url.pathname.endsWith('.json')
+        );
         if (shouldCache) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => caches.match('/index.html'));
+      }).catch(() => {
+        // Fallback SPA apenas para navegação (não para assets)
+        if (event.request.mode === 'navigate') {
+          return caches.match('/index.html');
+        }
+        // Para outros recursos locais que falharem, retorna erro real
+        return new Response('Recurso offline', { status: 503 });
+      });
     })
   );
 });

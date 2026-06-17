@@ -434,6 +434,484 @@ function ProcessingScreen({ lang, go, project }) {
   );
 }
 
+/* ─── helpers ─────────────────────────────────── */
+function toSec(mmss) {
+  const parts = mmss.split(':').map(Number);
+  if (parts.length === 2) return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+  if (parts.length === 3) return (parts[0] ?? 0) * 3600 + (parts[1] ?? 0) * 60 + (parts[2] ?? 0);
+  return Number(mmss) || 0;
+}
+
+function toMmss(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+/* ─── clip editor ─────────────────────────────────── */
+function ClipEditor({
+  clipId,
+  title,
+  initialStart,
+  initialEnd,
+  videoUrl,
+  outputUrl,
+  onSaved,
+  lang = 'pt'
+}) {
+  const videoRef = React.useRef(null);
+  const [open, setOpen] = React.useState(false);
+  const [duration, setDuration] = React.useState(
+    initialEnd > 0 ? initialEnd + 60 : 300
+  );
+  const [currentTime, setCurrentTime] = React.useState(initialStart);
+  const [playing, setPlaying] = React.useState(false);
+  const [start, setStart] = React.useState(initialStart);
+  const [end, setEnd] = React.useState(initialEnd);
+  const [startInput, setStartInput] = React.useState(toMmss(initialStart));
+  const [endInput, setEndInput] = React.useState(toMmss(initialEnd));
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = start;
+  }, [open]);
+
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    function onTimeUpdate() {
+      if (!video) return;
+      setCurrentTime(video.currentTime);
+      if (video.currentTime >= end) {
+        video.pause();
+        video.currentTime = end;
+        setPlaying(false);
+      }
+    }
+
+    function onLoadedMetadata() {
+      if (!video) return;
+      setDuration(video.duration);
+    }
+
+    function onEnded() {
+      setPlaying(false);
+    }
+
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('ended', onEnded);
+    return () => {
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('ended', onEnded);
+    };
+  }, [end]);
+
+  function togglePlay() {
+    const video = videoRef.current;
+    if (!video) return;
+    if (playing) {
+      video.pause();
+      setPlaying(false);
+    } else {
+      if (video.currentTime >= end || video.currentTime < start) {
+        video.currentTime = start;
+      }
+      video.play().catch(() => {});
+      setPlaying(true);
+    }
+  }
+
+  function seekTo(sec) {
+    const video = videoRef.current;
+    if (!video) return;
+    const clamped = Math.min(duration, Math.max(0, sec));
+    video.currentTime = clamped;
+    setCurrentTime(clamped);
+  }
+
+  function handleSliderChange(newStart, newEnd) {
+    const s = Math.min(newStart, newEnd - 1);
+    const e = Math.max(newEnd, newStart + 1);
+    setStart(s);
+    setEnd(e);
+    setStartInput(toMmss(s));
+    setEndInput(toMmss(e));
+    const video = videoRef.current;
+    if (video && !playing) video.currentTime = s;
+  }
+
+  function commitStartInput() {
+    const s = Math.min(end - 1, Math.max(0, toSec(startInput)));
+    setStart(s);
+    setStartInput(toMmss(s));
+    seekTo(s);
+  }
+
+  function commitEndInput() {
+    const e = Math.min(duration, Math.max(start + 1, toSec(endInput)));
+    setEnd(e);
+    setEndInput(toMmss(e));
+  }
+
+  function previewClip() {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = start;
+    video.play().catch(() => {});
+    setPlaying(true);
+  }
+
+  function reset() {
+    setStart(initialStart);
+    setEnd(initialEnd);
+    setStartInput(toMmss(initialStart));
+    setEndInput(toMmss(initialEnd));
+    seekTo(initialStart);
+  }
+
+  async function save() {
+    if (!Supa.client) {
+      window.showToast(lang === 'en' ? 'Demo mode — saving simulated ✓' : 'Modo demo — salvando simulado ✓', { type: 'success' });
+      onSaved(start, end);
+      return;
+    }
+    setSaving(true);
+    const { error } = await Supa.client
+      .from('clips')
+      .update({ start_sec: start, end_sec: end })
+      .eq('id', clipId);
+    setSaving(false);
+    if (error) {
+      window.showToast((lang === 'en' ? 'Error saving: ' : 'Erro ao salvar: ') + error.message, { type: 'error' });
+    } else {
+      window.showToast(lang === 'en' ? 'Cut updated ✓' : 'Corte atualizado ✓', { type: 'success' });
+      onSaved(start, end);
+    }
+  }
+
+  const playheadPct = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const startPct = duration > 0 ? (start / duration) * 100 : 0;
+  const endPct = duration > 0 ? (end / duration) * 100 : 0;
+  const clipDuration = end - start;
+
+  return (
+    <div className="mt-3 rounded-lg border border-border overflow-hidden" style={{ border: '1px solid var(--border)', borderRadius: 8, marginTop: 12 }}>
+      <style>{`
+        .double-range-container {
+          position: relative;
+          height: 24px;
+          margin-top: 4px;
+        }
+        .double-range-slider {
+          position: absolute;
+          width: 100%;
+          height: 24px;
+          top: 0;
+          left: 0;
+          background: none;
+          pointer-events: none;
+          -webkit-appearance: none;
+          appearance: none;
+          margin: 0;
+        }
+        .double-range-slider::-webkit-slider-thumb {
+          pointer-events: auto;
+          cursor: ew-resize;
+          width: 12px;
+          height: 24px;
+          border-radius: 3px;
+          background: var(--accent);
+          border: 1px solid #fff;
+          -webkit-appearance: none;
+        }
+        .double-range-slider::-moz-range-thumb {
+          pointer-events: auto;
+          cursor: ew-resize;
+          width: 12px;
+          height: 24px;
+          border-radius: 3px;
+          background: var(--accent);
+          border: 1px solid #fff;
+        }
+      `}</style>
+
+      <button
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-surface-2 hover:bg-surface-1 transition-colors text-sm font-medium"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 12px',
+          background: 'var(--surface-2)',
+          border: 'none',
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          cursor: 'pointer',
+          color: 'var(--fg)',
+          fontSize: 13,
+          fontWeight: 500
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="scissors" size={14} style={{ color: 'var(--accent)' }} />
+          {lang === 'en' ? 'Edit cut' : 'Editar corte'}
+          <span style={{ color: 'var(--muted)', fontWeight: 'normal', fontSize: 11, marginLeft: 4 }}>
+            {toMmss(start)} → {toMmss(end)}
+            <span style={{ marginLeft: 6, color: 'var(--accent)', fontWeight: 500 }}>({toMmss(clipDuration)})</span>
+          </span>
+        </span>
+        <Icon name="chevD" size={16} style={{ transition: 'transform 0.2s', transform: open ? 'rotate(180deg)' : 'none', color: 'var(--muted)' }} />
+      </button>
+
+      {open && (
+        <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12, background: 'var(--surface-1)' }}>
+
+          {videoUrl ? (
+            <div style={{ position: 'relative', borderRadius: 6, overflow: 'hidden', background: '#000', aspectRatio: '16/9', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                preload="metadata"
+                playsInline
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+              />
+
+              <div
+                onClick={togglePlay}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(0,0,0,0.15)',
+                  cursor: 'pointer',
+                  opacity: playing ? 0 : 1,
+                  transition: 'opacity 0.2s'
+                }}
+                className="video-overlay-play"
+              >
+                <div style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.7)',
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: '#fff'
+                }}>
+                  {playing ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
+                  ) : (
+                    <Icon name="play" size={20} fill="current" style={{ marginLeft: 3 }} />
+                  )}
+                </div>
+              </div>
+
+              <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 11, fontFamily: 'var(--font-mono)', background: 'rgba(0,0,0,0.7)', color: '#fff', padding: '2px 6px', borderRadius: 4 }}>
+                {toMmss(currentTime)} / {toMmss(duration)}
+              </div>
+            </div>
+          ) : (
+            <div style={{ borderRadius: 6, background: 'var(--surface-2)', aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+              <p style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center' }}>
+                {lang === 'en' ? 'Upload the video to see preview' : 'Faça upload do vídeo para ver o preview'}
+              </p>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 500 }}>Timeline</div>
+
+            <div
+              style={{
+                position: 'relative',
+                height: 32,
+                borderRadius: 6,
+                background: 'var(--surface-2)',
+                cursor: 'pointer',
+                userSelect: 'none',
+                overflow: 'hidden'
+              }}
+              onClick={(e) => {
+                if (e.target.classList.contains('double-range-slider')) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const pct = (e.clientX - rect.left) / rect.width;
+                seekTo(pct * duration);
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: `${startPct}%`,
+                  width: `${endPct - startPct}%`,
+                  background: 'rgba(232, 84, 59, 0.15)',
+                  borderLeft: '2px solid var(--accent)',
+                  borderRight: '2px solid var(--accent)'
+                }}
+              />
+
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  background: '#fff',
+                  boxShadow: '0 0 4px rgba(0,0,0,0.5)',
+                  left: `${playheadPct}%`,
+                  pointerEvents: 'none'
+                }}
+              />
+            </div>
+
+            <div className="double-range-container">
+              <input
+                type="range"
+                min={0}
+                max={Math.ceil(duration)}
+                step={0.5}
+                value={start}
+                onChange={(e) => handleSliderChange(parseFloat(e.target.value), end)}
+                className="double-range-slider"
+              />
+              <input
+                type="range"
+                min={0}
+                max={Math.ceil(duration)}
+                step={0.5}
+                value={end}
+                onChange={(e) => handleSliderChange(start, parseFloat(e.target.value))}
+                className="double-range-slider"
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>{lang === 'en' ? 'Start (mm:ss)' : 'Início (mm:ss)'}</div>
+              <input
+                value={startInput}
+                onChange={(e) => setStartInput(e.target.value)}
+                onBlur={commitStartInput}
+                onKeyDown={(e) => e.key === 'Enter' && commitStartInput()}
+                placeholder="0:00"
+                style={{
+                  width: '100%',
+                  padding: '6px 10px',
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  color: 'var(--fg)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13
+                }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>{lang === 'en' ? 'End (mm:ss)' : 'Fim (mm:ss)'}</div>
+              <input
+                value={endInput}
+                onChange={(e) => setEndInput(e.target.value)}
+                onBlur={commitEndInput}
+                onKeyDown={(e) => e.key === 'Enter' && commitEndInput()}
+                placeholder="1:00"
+                style={{
+                  width: '100%',
+                  padding: '6px 10px',
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  color: 'var(--fg)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 6, background: 'var(--surface-2)', fontSize: 11 }}>
+            <span style={{ color: 'var(--muted)' }}>{lang === 'en' ? 'Cut duration' : 'Duração do corte'}</span>
+            <span style={{
+              fontWeight: 'bold',
+              fontFamily: 'var(--font-mono)',
+              color: clipDuration < 5 ? 'var(--hot)' : clipDuration > 90 ? '#fbbf24' : 'var(--accent)'
+            }}>
+              {toMmss(clipDuration)}
+              {clipDuration < 5 && (lang === 'en' ? ' — too short' : ' — muito curto')}
+              {clipDuration > 90 && (lang === 'en' ? ' — above 90s' : ' — acima de 90s (recomendado ≤ 90s)')}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Btn
+              size="sm"
+              variant="outline"
+              onClick={previewClip}
+              disabled={!videoUrl}
+              style={{ padding: '4px 8px', fontSize: 11.5 }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Icon name="play" size={12} />
+                {lang === 'en' ? 'Preview cut' : 'Preview do corte'}
+              </span>
+            </Btn>
+
+            <Btn
+              size="sm"
+              variant="ghost"
+              onClick={reset}
+              style={{ padding: '4px 8px', fontSize: 11.5, color: 'var(--muted)' }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Icon name="undo" size={12} />
+                {lang === 'en' ? 'Restore original' : 'Restaurar original'}
+              </span>
+            </Btn>
+
+            <Btn
+              size="sm"
+              variant="primary"
+              onClick={save}
+              disabled={saving || (start === initialStart && end === initialEnd)}
+              style={{ padding: '4px 10px', fontSize: 11.5, marginLeft: 'auto' }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {saving ? (
+                  <Icon name="refresh" size={12} className="spin" />
+                ) : (
+                  <Icon name="save" size={12} />
+                )}
+                {saving ? (lang === 'en' ? 'Saving…' : 'Salvando…') : (lang === 'en' ? 'Save cut' : 'Salvar corte')}
+              </span>
+            </Btn>
+          </div>
+
+          {outputUrl && (start !== initialStart || end !== initialEnd) ? (
+            <p style={{ fontSize: 11, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
+              ⚠️ {lang === 'en' ? 'You have a rendered clip. Saving will require re-rendering.' : 'Você tem um clip renderizado. Ao salvar, será necessário re-renderizar para aplicar o novo corte.'}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ClipsScreen({ lang, go, project, openClip, user }) {
   const T = STR[lang];
   const [clips, setClips] = useState([]);
@@ -444,6 +922,8 @@ function ClipsScreen({ lang, go, project, openClip, user }) {
   const [selected, setSelected] = useState(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [dlLoadingId, setDlLoadingId] = useState(null); // id do clip sendo baixado
+  const [clipTimes, setClipTimes] = useState({});
+  const [videoPlayerUrl, setVideoPlayerUrl] = useState(null);
 
   function toggleSelect(id) {
     const next = new Set(selected);
@@ -491,6 +971,15 @@ function ClipsScreen({ lang, go, project, openClip, user }) {
     }
     load();
   }, [project, user]);
+
+  useEffect(() => {
+    if (!project?.source_url || project.source_type !== 'upload') return;
+    if (!Supa.client) return;
+    const { data } = Supa.client.storage
+      .from('videos')
+      .getPublicUrl(project.source_url);
+    setVideoPlayerUrl(data.publicUrl);
+  }, [project?.source_url]);
 
   const filtered = useMemo(() => {
     let arr = [...clips];
@@ -628,24 +1117,46 @@ function ClipsScreen({ lang, go, project, openClip, user }) {
                 {c.likes_count >= 0 && <span className="row" style={{gap:4}}><Icon name="heart" size={12}/>{c.likes_count}</span>}
               </div>
 
+              <p className="text-xs text-muted-foreground mb-2" style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, marginBottom: 6 }}>
+                {toMmss(clipTimes[c.id]?.start ?? c.start_sec ?? 0)} → {toMmss(clipTimes[c.id]?.end ?? c.end_sec ?? c.duration ?? 60)}
+                <span style={{ marginLeft: 8, fontWeight: 500, color: 'var(--accent)' }}>
+                  ({toMmss(
+                    ((clipTimes[c.id]?.end ?? c.end_sec ?? c.duration ?? 60) - (clipTimes[c.id]?.start ?? c.start_sec ?? 0))
+                  )})
+                </span>
+              </p>
+
               <div className="meta" style={{ marginTop: 8 }}>
                 <Btn size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openClip ? openClip(c) : go('editor', { project, clip: c }); }}>{T.edit}</Btn>
                 <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
                   <Btn size="sm" variant="ghost" icon="send" onClick={e => { e.stopPropagation(); go('schedule'); }}>{lang === 'en' ? 'Post' : 'Postar'}</Btn>
                   <Btn
-    size="sm"
-    variant="primary"
-    icon={dlLoadingId === c.id ? 'refresh' : 'download'}
-    disabled={dlLoadingId === c.id}
-    onClick={(e) => dl(c, e)}
-    style={{ minWidth: 80 }}
-  >
-    {dlLoadingId === c.id
-      ? (lang === 'en' ? 'Saving…' : 'Salvando…')
-      : T.dl}
-  </Btn>
+                    size="sm"
+                    variant="primary"
+                    icon={dlLoadingId === c.id ? 'refresh' : 'download'}
+                    disabled={dlLoadingId === c.id}
+                    onClick={(e) => dl(c, e)}
+                    style={{ minWidth: 80 }}
+                  >
+                    {dlLoadingId === c.id
+                      ? (lang === 'en' ? 'Saving…' : 'Salvando…')
+                      : T.dl}
+                  </Btn>
                 </div>
               </div>
+
+              <ClipEditor
+                clipId={c.id}
+                title={c.title}
+                initialStart={clipTimes[c.id]?.start ?? c.start_sec ?? 0}
+                initialEnd={clipTimes[c.id]?.end ?? c.end_sec ?? c.duration ?? 60}
+                videoUrl={videoPlayerUrl}
+                outputUrl={c.output_url}
+                onSaved={(start, end) => {
+                  setClipTimes((prev) => ({ ...prev, [c.id]: { start, end } }));
+                }}
+                lang={lang}
+              />
             </div>
           </div>
         ))}
